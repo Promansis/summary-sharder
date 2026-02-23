@@ -1,0 +1,11 @@
+{
+    "display_name": "Summary Sharder",
+    "loading_order": 10,
+    "requires": [],
+    "optional": [],
+    "generate_interceptor": "summary_sharder_rearrangeChat",
+    "js": "index.js",
+    "author": "Promansis",
+    "version": "0.1.0",    
+    "homePage": "https://github.com/Promansis/summary-sharder"
+}
