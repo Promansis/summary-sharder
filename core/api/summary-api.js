@@ -16,6 +16,7 @@ import { extractEventsFromMessages, generateEventBasedSummary } from './events-a
 
 // Import shared API client functions
 import { callSillyTavernAPI, callExternalAPI, normalizeApiUrl } from './api-client.js';
+import { callConnectionProfileAPI } from './connection-profile-api.js';
 
 // Import abort controller
 import {
@@ -60,11 +61,14 @@ async function callSummaryAPI(settings, systemPrompt, userPrompt) {
         temperature: effectiveSettings.temperature,
         topP: effectiveSettings.topP,
         maxTokens: effectiveSettings.maxTokens,
-        signal: getAbortSignal()
+        signal: getAbortSignal(),
+        messageFormat: effectiveSettings.messageFormat
     };
 
     if (effectiveSettings.useSillyTavernAPI) {
         return await callSillyTavernAPI(systemPrompt, userPrompt, options);
+    } else if (effectiveSettings.useConnectionProfile) {
+        return await callConnectionProfileAPI(effectiveSettings.connectionProfileId, systemPrompt, userPrompt, options);
     } else {
         // Pass system and user prompts separately for proper backend routing
         return await callExternalAPI(effectiveSettings, systemPrompt, userPrompt, options);

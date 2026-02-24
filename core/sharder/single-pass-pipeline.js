@@ -5,6 +5,7 @@
 import { getSharderPrompts } from '../summarization/prompts.js';
 import { parseExtractionResponse, reconstructExtraction, parseSceneCodes } from '../summarization/sharder-pipeline.js';
 import { callSillyTavernAPI, callExternalAPI } from '../api/api-client.js';
+import { callConnectionProfileAPI } from '../api/connection-profile-api.js';
 import { getAbortSignal } from '../api/abort-controller.js';
 import { getFeatureApiSettings } from '../api/feature-api-config.js';
 import { sanitizeSinglePassSections } from './canonical-sanitizer.js';
@@ -25,10 +26,15 @@ async function callSharderApi(settings, systemPrompt, userPrompt) {
         topP: effective.topP,
         maxTokens: effective.maxTokens,
         signal: getAbortSignal(),
+        messageFormat: effective.messageFormat,
     };
 
     if (effective.useSillyTavernAPI) {
         return await callSillyTavernAPI(systemPrompt, userPrompt, options);
+    }
+
+    if (effective.useConnectionProfile) {
+        return await callConnectionProfileAPI(effective.connectionProfileId, systemPrompt, userPrompt, options);
     }
 
     return await callExternalAPI(effective, systemPrompt, userPrompt, options);

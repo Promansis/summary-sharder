@@ -4,7 +4,8 @@
  */
 
 import { saveSettings } from '../../../core/settings.js';
-import { getApiConfigs, getConfigById } from '../../../core/api/legacy-api-config.js';
+import { getApiConfigs } from '../../../core/api/legacy-api-config.js';
+import { getConnectionProfiles, isConnectionManagerAvailable } from '../../../core/api/connection-profile-api.js';
 import { Popup, POPUP_TYPE } from '../../../../../../popup.js';
 import { updateApiStatusDisplays } from '../../common/api-status-state.js';
 import { createSegmentedToggle } from '../../common/index.js';
@@ -18,11 +19,17 @@ import { createSegmentedToggle } from '../../common/index.js';
 function renderFeatureTab(settings, feature, container) {
     const featureConfig = settings.apiFeatures?.[feature] || {
         useSillyTavernAPI: false,
-        apiConfigId: null
+        apiConfigId: null,
+        connectionProfileId: null
     };
 
     const savedConfigs = getApiConfigs(settings);
-    const usingST = featureConfig.useSillyTavernAPI;
+    const connectionManagerAvailable = isConnectionManagerAvailable();
+    const profileGroups = connectionManagerAvailable ? getConnectionProfiles() : [];
+    const selectedProfileId = featureConfig.connectionProfileId || null;
+    const usingST = featureConfig.useSillyTavernAPI === true;
+    const usingProfile = !usingST && !!selectedProfileId;
+    const currentMode = usingST ? 'st' : (usingProfile ? 'profile' : 'external');
     const selectedConfigId = featureConfig.apiConfigId;
 
     // Feature display names
@@ -32,6 +39,25 @@ function renderFeatureTab(settings, feature, container) {
         events: 'Pre-Edit Events'
     };
     const featureName = featureNames[feature] || feature;
+    const profileUnavailableTitle = 'Connection Manager extension is unavailable. Enable it in Extensions to use profile mode.';
+    const selectedProfileFound = profileGroups.some(group => group.profiles.some(profileEntry => profileEntry.id === selectedProfileId));
+    const profileOptionsHtml = profileGroups.map(group => `
+        <optgroup label="${group.label}">
+            ${group.profiles.map(profileEntry => `
+                <option value="${profileEntry.id}" ${selectedProfileId === profileEntry.id ? 'selected' : ''}>
+                    ${profileEntry.name}
+                </option>
+            `).join('')}
+        </optgroup>
+    `).join('');
+    const fallbackProfileOption = selectedProfileId && !selectedProfileFound
+        ? `<option value="${selectedProfileId}" selected>Unknown Profile (${selectedProfileId})</option>`
+        : '';
+    const profileWarningHtml = !connectionManagerAvailable && usingProfile
+        ? `<p class="ss-api-profile-warning ss-text-hint">
+            Profile mode is active but Connection Manager is unavailable. Enable Connection Manager or switch this feature API mode.
+        </p>`
+        : '';
 
     const html = `
         <div class="ss-api-feature-config">
@@ -45,7 +71,7 @@ function renderFeatureTab(settings, feature, container) {
 
             <div class="ss-api-mode-selector">
                 <label class="ss-api-radio-label">
-                    <input type="radio" name="${feature}-api-mode" value="st" ${usingST ? 'checked' : ''} />
+                    <input type="radio" name="${feature}-api-mode" value="st" ${currentMode === 'st' ? 'checked' : ''} />
                     <strong>Use SillyTavern's Current API</strong>
                     <p class="ss-api-radio-hint">
                         Uses whichever API is currently active in SillyTavern's main settings.
@@ -53,14 +79,14 @@ function renderFeatureTab(settings, feature, container) {
                 </label>
 
                 <label class="ss-api-radio-label">
-                    <input type="radio" name="${feature}-api-mode" value="external" ${!usingST ? 'checked' : ''} />
+                    <input type="radio" name="${feature}-api-mode" value="external" ${currentMode === 'external' ? 'checked' : ''} />
                     <strong>Use External API</strong>
                     <p class="ss-api-radio-hint">
                         Choose a saved API configuration from the list below.
                     </p>
                 </label>
 
-                <div class="ss-external-api-selection ${usingST ? 'ss-disabled-section' : ''}">
+                <div class="ss-external-api-selection ${currentMode === 'external' ? '' : 'ss-disabled-section'}">
                     <select id="${feature}-api-select" class="text_pole ss-api-select">
                         <option value="">-- Select API Configuration --</option>
                         ${savedConfigs.map(config => `
@@ -74,6 +100,34 @@ function renderFeatureTab(settings, feature, container) {
                         Manage Saved APIs...
                     </button>
                 </div>
+
+                <label class="ss-api-radio-label"
+                    ${connectionManagerAvailable ? '' : `title="${profileUnavailableTitle}"`}>
+                    <input type="radio"
+                        name="${feature}-api-mode"
+                        value="profile"
+                        ${currentMode === 'profile' ? 'checked' : ''}
+                        ${connectionManagerAvailable ? '' : 'disabled'}
+                        ${connectionManagerAvailable ? '' : `title="${profileUnavailableTitle}"`} />
+                    <strong>Use Connection Profile</strong>
+                    <p class="ss-api-radio-hint">
+                        Use a specific Connection Manager profile without changing SillyTavern's global active connection.
+                    </p>
+                </label>
+
+                <div class="ss-profile-api-selection ${currentMode === 'profile' ? '' : 'ss-disabled-section'}"
+                    ${connectionManagerAvailable ? '' : `title="${profileUnavailableTitle}"`}>
+                    <select id="${feature}-profile-select"
+                        class="text_pole ss-api-select"
+                        ${connectionManagerAvailable && currentMode === 'profile' ? '' : 'disabled'}
+                        ${connectionManagerAvailable ? '' : `title="${profileUnavailableTitle}"`}>
+                        <option value="">-- Select Connection Profile --</option>
+                        ${fallbackProfileOption}
+                        ${profileOptionsHtml}
+                    </select>
+                </div>
+
+                ${profileWarningHtml}
             </div>
 
             <!-- Generation Settings Section -->
@@ -111,11 +165,11 @@ function renderFeatureTab(settings, feature, container) {
                 </div>
 
                 <div class="ss-setting-row ss-api-secondary-setting-row">
-                    <div class="ss-api-option-column ${usingST ? 'ss-disabled-section' : ''}">
+                    <div class="ss-api-option-column ${currentMode === 'external' ? '' : 'ss-disabled-section'}">
                         <label for="${feature}-post-processing">Prompt Post-Processing:</label>
                         <select id="${feature}-post-processing" class="text_pole"
                                 title="Transform messages before sending to API. Only applies to External API mode."
-                                ${usingST ? 'disabled' : ''}>
+                                ${currentMode === 'external' ? '' : 'disabled'}>
                             <option value="" ${(featureConfig.postProcessing || '') === '' ? 'selected' : ''}>None</option>
                             <option value="merge" ${featureConfig.postProcessing === 'merge' ? 'selected' : ''}>Merge (same-role)</option>
                             <option value="semi" ${featureConfig.postProcessing === 'semi' ? 'selected' : ''}>Semi-strict alternating</option>
@@ -134,7 +188,7 @@ function renderFeatureTab(settings, feature, container) {
                         <div id="${feature}-message-format-host"></div>
                         <p class="ss-api-option-hint">
                             Use "Alternating" if your API requires assistant turns between messages.
-                            Recommended for proxy APIs. Applies to both ST and External API modes.
+                            Recommended for proxy APIs. Applies to ST, External, and Connection Profile modes.
                         </p>
                     </div>
                 </div>
@@ -147,14 +201,33 @@ function renderFeatureTab(settings, feature, container) {
     // Event handlers for this tab
     const stRadio = container.querySelector(`input[name="${feature}-api-mode"][value="st"]`);
     const externalRadio = container.querySelector(`input[name="${feature}-api-mode"][value="external"]`);
+    const profileRadio = container.querySelector(`input[name="${feature}-api-mode"][value="profile"]`);
     const externalSelection = container.querySelector('.ss-external-api-selection');
+    const profileSelection = container.querySelector('.ss-profile-api-selection');
     const apiSelect = container.querySelector(`#${feature}-api-select`);
+    const profileSelect = container.querySelector(`#${feature}-profile-select`);
     const manageButton = container.querySelector(`#${feature}-manage-apis`);
 
-    // Toggle external selection visibility
+    const getSelectedMode = () => {
+        if (stRadio?.checked) return 'st';
+        if (profileRadio?.checked) return 'profile';
+        return 'external';
+    };
+
+    // Toggle mode-dependent sections and controls
     const updateVisibility = () => {
-        const isExternal = externalRadio.checked;
+        const mode = getSelectedMode();
+        const isExternal = mode === 'external';
+        const isProfile = mode === 'profile';
+
         externalSelection?.classList.toggle('ss-disabled-section', !isExternal);
+        if (apiSelect) apiSelect.disabled = !isExternal;
+        if (manageButton) manageButton.disabled = !isExternal;
+
+        profileSelection?.classList.toggle('ss-disabled-section', !isProfile);
+        if (profileSelect) {
+            profileSelect.disabled = !isProfile || !connectionManagerAvailable;
+        }
 
         // Post-processing only applies to external API
         const ppSelect = container.querySelector(`#${feature}-post-processing`);
@@ -167,6 +240,7 @@ function renderFeatureTab(settings, feature, container) {
 
     stRadio.addEventListener('change', updateVisibility);
     externalRadio.addEventListener('change', updateVisibility);
+    profileRadio?.addEventListener('change', updateVisibility);
 
     // Save changes when mode or selection changes
     const saveChanges = () => {
@@ -177,8 +251,22 @@ function renderFeatureTab(settings, feature, container) {
             settings.apiFeatures[feature] = {};
         }
 
-        settings.apiFeatures[feature].useSillyTavernAPI = stRadio.checked;
-        settings.apiFeatures[feature].apiConfigId = apiSelect.value || null;
+        const mode = getSelectedMode();
+        const existingProfileId = settings.apiFeatures[feature].connectionProfileId || selectedProfileId || null;
+
+        if (mode === 'st') {
+            settings.apiFeatures[feature].useSillyTavernAPI = true;
+            settings.apiFeatures[feature].apiConfigId = null;
+            settings.apiFeatures[feature].connectionProfileId = null;
+        } else if (mode === 'external') {
+            settings.apiFeatures[feature].useSillyTavernAPI = false;
+            settings.apiFeatures[feature].apiConfigId = apiSelect?.value || null;
+            settings.apiFeatures[feature].connectionProfileId = null;
+        } else {
+            settings.apiFeatures[feature].useSillyTavernAPI = false;
+            settings.apiFeatures[feature].connectionProfileId = profileSelect?.value || existingProfileId || null;
+            settings.apiFeatures[feature].apiConfigId = null;
+        }
 
         saveSettings(settings);
         console.log(`[SummarySharder] Updated ${feature} API config:`, settings.apiFeatures[feature]);
@@ -189,7 +277,10 @@ function renderFeatureTab(settings, feature, container) {
 
     stRadio.addEventListener('change', saveChanges);
     externalRadio.addEventListener('change', saveChanges);
+    profileRadio?.addEventListener('change', saveChanges);
     apiSelect.addEventListener('change', saveChanges);
+    profileSelect?.addEventListener('change', saveChanges);
+    updateVisibility();
 
     // Generation settings event handlers
     const queueDelayInput = container.querySelector(`#${feature}-queue-delay`);

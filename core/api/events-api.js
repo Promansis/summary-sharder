@@ -10,6 +10,7 @@ import { buildChatText } from '../chat/chat-text-builder.js';
 
 // Import shared API client functions
 import { callSillyTavernAPI, callExternalAPI, normalizeApiUrl } from './api-client.js';
+import { callConnectionProfileAPI } from './connection-profile-api.js';
 
 // Import feature API resolver
 import { getFeatureApiSettings } from './feature-api-config.js';
@@ -17,31 +18,34 @@ import { getFeatureApiSettings } from './feature-api-config.js';
 // Import abort controller
 import { getAbortSignal } from './abort-controller.js';
 
-    /**
-* Call the appropriate API based on settings
-* Uses feature-specific API configuration
-* @param {Object} settings - Extension settings
-* @param {string} systemPrompt - System prompt
-* @param {string} userPrompt - User prompt
-* @param {string} feature - Feature key ('events' or 'summary')
-*/
-   async function callAPI(settings, systemPrompt, userPrompt, feature = 'events') {
-   // Get effective API settings for the specified feature
-   const effectiveSettings = await getFeatureApiSettings(settings, feature);
+/**
+ * Call the appropriate API based on settings
+ * Uses feature-specific API configuration
+ * @param {Object} settings - Extension settings
+ * @param {string} systemPrompt - System prompt
+ * @param {string} userPrompt - User prompt
+ * @param {string} feature - Feature key ('events' or 'summary')
+ */
+async function callAPI(settings, systemPrompt, userPrompt, feature = 'events') {
+    // Get effective API settings for the specified feature
+    const effectiveSettings = await getFeatureApiSettings(settings, feature);
 
-   const options = {
-       temperature: effectiveSettings.temperature,
-       topP: effectiveSettings.topP,
-       maxTokens: effectiveSettings.maxTokens,
-       signal: getAbortSignal()
-   };
+    const options = {
+        temperature: effectiveSettings.temperature,
+        topP: effectiveSettings.topP,
+        maxTokens: effectiveSettings.maxTokens,
+        signal: getAbortSignal(),
+        messageFormat: effectiveSettings.messageFormat
+    };
 
-   if (effectiveSettings.useSillyTavernAPI) {
-       return await callSillyTavernAPI(systemPrompt, userPrompt, options);
+    if (effectiveSettings.useSillyTavernAPI) {
+        return await callSillyTavernAPI(systemPrompt, userPrompt, options);
+    } else if (effectiveSettings.useConnectionProfile) {
+        return await callConnectionProfileAPI(effectiveSettings.connectionProfileId, systemPrompt, userPrompt, options);
     } else {
-       return await callExternalAPI(effectiveSettings, systemPrompt, userPrompt, options);
-        }
-   }
+        return await callExternalAPI(effectiveSettings, systemPrompt, userPrompt, options);
+    }
+}
 
 /**
  * Parse JSON from LLM response, handling markdown code blocks

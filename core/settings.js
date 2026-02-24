@@ -120,6 +120,7 @@ export function getDefaultSettings() {
             summary: {
                 useSillyTavernAPI: false,  // Toggle: ST API vs External
                 apiConfigId: null,          // ID from savedApiConfigs, or null
+                connectionProfileId: null,  // ID from Connection Manager profiles, or null
                 queueDelayMs: 0,            // Delay in milliseconds between API calls
                 temperature: 0.4,           // Generation temperature (0-2)
                 topP: 1,                    // Nucleus sampling threshold (0-1)
@@ -130,6 +131,7 @@ export function getDefaultSettings() {
             sharder: {
                 useSillyTavernAPI: false,
                 apiConfigId: null,
+                connectionProfileId: null,
                 queueDelayMs: 0,
                 temperature: 0.3,
                 topP: 1,
@@ -140,6 +142,7 @@ export function getDefaultSettings() {
             events: {
                 useSillyTavernAPI: false,
                 apiConfigId: null,
+                connectionProfileId: null,
                 queueDelayMs: 0,
                 temperature: 0.4,
                 topP: 1,
@@ -150,6 +153,7 @@ export function getDefaultSettings() {
             chatManager: {
                 useSillyTavernAPI: false,
                 apiConfigId: null,
+                connectionProfileId: null,
                 queueDelayMs: 0,
                 temperature: 0.3,
                 topP: 1,
@@ -423,7 +427,8 @@ export function migrateSettings(settings) {
         settings.apiFeatures = {
             summary: {
                 useSillyTavernAPI: settings.useSillyTavernAPI ?? false,
-                apiConfigId: settings.activeApiConfigId || null
+                apiConfigId: settings.activeApiConfigId || null,
+                connectionProfileId: null
             },
             events: {
                 // Events uses alternate API if configured, otherwise inherits main
@@ -432,11 +437,13 @@ export function migrateSettings(settings) {
                     : (settings.useSillyTavernAPI ?? false),
                 apiConfigId: (settings.useAlternateEventsApi && settings.eventsApiConfigId)
                     ? settings.eventsApiConfigId
-                    : (settings.activeApiConfigId || null)
+                    : (settings.activeApiConfigId || null),
+                connectionProfileId: null
             },
             sharder: {
                 useSillyTavernAPI: settings.useSillyTavernAPI ?? false,
-                apiConfigId: settings.activeApiConfigId || null
+                apiConfigId: settings.activeApiConfigId || null,
+                connectionProfileId: null
             }
         };
 
@@ -448,7 +455,8 @@ export function migrateSettings(settings) {
     if (settings.apiFeatures && !settings.apiFeatures.chatManager) {
         settings.apiFeatures.chatManager = {
             useSillyTavernAPI: settings.apiFeatures.summary?.useSillyTavernAPI ?? false,
-            apiConfigId: settings.apiFeatures.summary?.apiConfigId || null
+            apiConfigId: settings.apiFeatures.summary?.apiConfigId || null,
+            connectionProfileId: settings.apiFeatures.summary?.connectionProfileId || null
         };
         console.log('[SummarySharder] Added chatManager to apiFeatures (inheriting from summary settings)');
         migrated = true;
@@ -466,7 +474,8 @@ export function migrateSettings(settings) {
     if (settings.apiFeatures && !settings.apiFeatures.sharder) {
         settings.apiFeatures.sharder = {
             useSillyTavernAPI: settings.apiFeatures.summary?.useSillyTavernAPI ?? false,
-            apiConfigId: settings.apiFeatures.summary?.apiConfigId || null
+            apiConfigId: settings.apiFeatures.summary?.apiConfigId || null,
+            connectionProfileId: settings.apiFeatures.summary?.connectionProfileId || null
         };
         console.log('[SummarySharder] Added sharder to apiFeatures (inheriting from summary settings)');
         migrated = true;
@@ -493,6 +502,7 @@ export function migrateSettings(settings) {
                 if (cfg.maxTokens === undefined) { cfg.maxTokens = def.maxTokens; needsMigration = true; }
                 if (cfg.postProcessing === undefined) { cfg.postProcessing = ''; needsMigration = true; }
                 if (cfg.messageFormat === undefined) { cfg.messageFormat = 'minimal'; needsMigration = true; }
+                if (cfg.connectionProfileId === undefined) { cfg.connectionProfileId = null; needsMigration = true; }
             }
         }
 

@@ -19,7 +19,7 @@ const DEFAULT_GENERATION_PARAMS = {
  * Get effective API settings for a specific feature
  * @param {Object} settings - Extension settings
  * @param {string} feature - Feature name ('summary', 'sharder', 'events', 'chatManager')
- * @returns {Promise<{useSillyTavernAPI: boolean, apiUrl: string, apiKey: string, selectedModel: string, temperature: number, topP: number, maxTokens: number, queueDelayMs: number}>}
+ * @returns {Promise<{useSillyTavernAPI: boolean, useConnectionProfile: boolean, connectionProfileId: string|null, apiUrl: string, apiKey: string, selectedModel: string, temperature: number, topP: number, maxTokens: number, queueDelayMs: number}>}
  * @throws {Error} If API is not configured for the feature
  */
 export async function getFeatureApiSettings(settings, feature) {
@@ -46,6 +46,21 @@ export async function getFeatureApiSettings(settings, feature) {
     if (featureConfig.useSillyTavernAPI) {
         return {
             useSillyTavernAPI: true,
+            useConnectionProfile: false,
+            connectionProfileId: null,
+            apiUrl: '',
+            apiKey: '',
+            selectedModel: '',
+            ...generationParams
+        };
+    }
+
+    // Using Connection Manager profile
+    if (featureConfig.connectionProfileId) {
+        return {
+            useSillyTavernAPI: false,
+            useConnectionProfile: true,
+            connectionProfileId: featureConfig.connectionProfileId,
             apiUrl: '',
             apiKey: '',
             selectedModel: '',
@@ -69,6 +84,8 @@ export async function getFeatureApiSettings(settings, feature) {
 
         return {
             useSillyTavernAPI: false,
+            useConnectionProfile: false,
+            connectionProfileId: null,
             apiUrl: config.url,
             apiKey: apiKey,
             selectedModel: config.model || '',
@@ -97,6 +114,8 @@ async function getLegacyApiSettings(settings, feature) {
             if (apiKey) {
                 return {
                     useSillyTavernAPI: false,
+                    useConnectionProfile: false,
+                    connectionProfileId: null,
                     apiUrl: config.url,
                     apiKey: apiKey,
                     selectedModel: config.model || settings.selectedModel
@@ -116,6 +135,8 @@ async function getLegacyApiSettings(settings, feature) {
             if (apiKey) {
                 return {
                     useSillyTavernAPI: false,
+                    useConnectionProfile: false,
+                    connectionProfileId: null,
                     apiUrl: config.url,
                     apiKey: apiKey,
                     selectedModel: config.model || settings.selectedModel
@@ -127,6 +148,8 @@ async function getLegacyApiSettings(settings, feature) {
     // Fall back to direct settings (manual entry mode)
     return {
         useSillyTavernAPI: settings.useSillyTavernAPI || false,
+        useConnectionProfile: false,
+        connectionProfileId: null,
         apiUrl: settings.apiUrl || '',
         apiKey: settings.apiKey || '',
         selectedModel: settings.selectedModel || ''
@@ -150,6 +173,16 @@ export function getFeatureApiDisplayString(settings, feature) {
     // Using SillyTavern API
     if (featureConfig.useSillyTavernAPI) {
         return 'SillyTavern Current';
+    }
+
+    if (featureConfig.connectionProfileId) {
+        const profile = SillyTavern.getContext()
+            ?.extensionSettings
+            ?.connectionManager
+            ?.profiles
+            ?.find(p => p.id === featureConfig.connectionProfileId);
+
+        return profile ? `Profile: ${profile.name}` : 'Unknown Profile';
     }
 
     // Using external API

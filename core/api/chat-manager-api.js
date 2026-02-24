@@ -6,6 +6,7 @@
 import { characters, getRequestHeaders } from '../../../../../../script.js';
 import { getFeatureApiSettings } from './feature-api-config.js';
 import { callSillyTavernAPI, callExternalAPI } from './api-client.js';
+import { callConnectionProfileAPI } from './connection-profile-api.js';
 
 /**
  * Load chat content from the API
@@ -171,11 +172,14 @@ export async function callChatManagerAPI(settings, systemPrompt, userPrompt) {
     const options = {
         temperature: effectiveSettings.temperature,
         topP: effectiveSettings.topP,
-        maxTokens: effectiveSettings.maxTokens
+        maxTokens: effectiveSettings.maxTokens,
+        messageFormat: effectiveSettings.messageFormat
     };
 
     if (effectiveSettings.useSillyTavernAPI) {
         return await callSillyTavernAPI(systemPrompt, userPrompt, options);
+    } else if (effectiveSettings.useConnectionProfile) {
+        return await callConnectionProfileAPI(effectiveSettings.connectionProfileId, systemPrompt, userPrompt, options);
     } else {
         return await callExternalAPI(effectiveSettings, systemPrompt, userPrompt, options);
     }
