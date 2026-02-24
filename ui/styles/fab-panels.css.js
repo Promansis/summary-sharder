@@ -192,6 +192,73 @@ export const FAB_PANELS_CSS = `
     transform: scale(1);
 }
 
+/* Bottom sheet mode for mobile */
+.ss-fab-panel-sheet {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 70vh;
+    border-radius: 16px 16px 0 0 !important;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.2);
+    transform: translateY(0) !important;
+    animation: ss-fab-sheet-slide-up 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ss-fab-panel-sheet[data-arrow]::before {
+    display: none !important;
+}
+
+/* Drag handle for sheet */
+.ss-fab-panel-sheet::after {
+    content: '';
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 32px;
+    height: 4px;
+    background: var(--ss-text-secondary, rgba(0, 0, 0, 0.3));
+    border-radius: 2px;
+    opacity: 0.5;
+}
+
+/* Scrollable sheet body */
+.ss-fab-panel-sheet .ss-fab-panel-body {
+    overflow-y: auto;
+    max-height: calc(70vh - 36px);
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Backdrop when sheet is active */
+.ss-fab-sheet-active {
+    z-index: 10000 !important;
+    pointer-events: auto !important;
+    background: rgba(0, 0, 0, 0.4);
+    animation: ss-fab-backdrop-fade-in 0.3s ease-out;
+}
+
+@keyframes ss-fab-sheet-slide-up {
+    from {
+        transform: translateY(100%);
+    }
+    to {
+        transform: translateY(0);
+    }
+}
+
+@keyframes ss-fab-backdrop-fade-in {
+    from {
+        background: rgba(0, 0, 0, 0);
+    }
+    to {
+        background: rgba(0, 0, 0, 0.4);
+    }
+}
+
 .ss-fab-panel-body {
     border-radius: 12px;
     overflow: hidden;
@@ -325,6 +392,19 @@ export const FAB_PANELS_CSS = `
     font-size: 12px;
 }
 
+@media (min-width: 769px) {
+    .ss-fab-panel-actions,
+    .ss-fab-panel-advanced {
+        min-width: 296px;
+        max-width: min(312px, calc(100vw - 16px));
+    }
+
+    .ss-fab-panel-actions .ss-fab-section-items-grid,
+    .ss-fab-panel-advanced .ss-fab-section-items-grid {
+        grid-template-columns: repeat(2, minmax(130px, 1fr));
+    }
+}
+
 @media (max-width: 768px) {
     .ss-fab-panels {
         --ss-fab-wheel-width: 58px;
@@ -336,15 +416,12 @@ export const FAB_PANELS_CSS = `
         transform: translateX(7px) rotate(var(--ss-wheel-icon-rotation, 0deg));
     }
 
-    .ss-fab-panel {
+    /* Only apply to non-sheet panels */
+    .ss-fab-panel:not(.ss-fab-panel-sheet) {
         max-width: calc(100vw - 16px);
         left: 8px !important;
         right: 8px !important;
         width: auto;
-    }
-
-    .ss-fab-section-items-grid {
-        grid-template-columns: 1fr;
     }
 
     .ss-fab-action {
@@ -353,7 +430,7 @@ export const FAB_PANELS_CSS = `
 }
 
 @media (max-width: 414px) {
-    .ss-fab-panel {
+    .ss-fab-panel:not(.ss-fab-panel-sheet) {
         left: 8px !important;
         right: 8px !important;
         width: auto;

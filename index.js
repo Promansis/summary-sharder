@@ -17,7 +17,7 @@ import { showSsConfirm } from './ui/common/modal-base.js';
 // Core modules
 import { getDefaultSettings, saveSettings, getChatRanges, saveChatRanges, migrateSettings, getActiveRagSettings } from './core/settings.js';
 import { ensureDefaultPrompt, getActivePrompt, ensureSharderPrompts } from './core/summarization/prompts.js';
-import { runSummarization, stopSummarization } from './core/api/summary-api.js';
+import { runSummarization, stopSummarization, setLastSummarizedIndexCallback } from './core/api/summary-api.js';
 import { runSharder } from './core/api/single-pass-api.js';
 import { cacheCurrentChatState, findDeletedIndex, getCachedLength } from './core/chat/chat-state.js';
 import { validateAllRanges } from './core/chat/range-manager.js';
@@ -44,6 +44,7 @@ let settings = { ...defaultSettings };
 
 // Track last summarized index per chat
 let lastSummarizedIndex = -1;
+let isAutoSummarizing = false;
 
 // Track pending visibility changes (debounce rapid changes)
 // Using an object reference so visibility-state.js can clear it
@@ -183,25 +184,101 @@ async function onExternalVisibilityChange() {
 
 /**
  * Handle new message events for auto-summarization
+ * @param {number|string|object} messageId - Message index from event payload
+ * @param {string} messageType - Message type from event payload
+ * @param {string} sourceEventType - Event type that invoked this handler
  */
-function onNewMessage() {
+function shouldQualifyAutoMessage(messageId, messageType, sourceEventType, chat) {
+    if (sourceEventType !== event_types.MESSAGE_RECEIVED) {
+        return false;
+    }
+
+    if (messageType === 'command' || messageType === 'first_message') {
+        return false;
+    }
+
+    const messageIndex = Number(messageId);
+    if (!Number.isInteger(messageIndex) || messageIndex < 0 || messageIndex >= chat.length) {
+        return false;
+    }
+
+    const msg = chat[messageIndex];
+    if (!msg) {
+        return false;
+    }
+
+    if (msg.is_user === true) {
+        return false;
+    }
+
+    if (msg.extra?.api === 'slash command' || msg.extra?.api === 'manual') {
+        return false;
+    }
+
+    const messageText = typeof msg.mes === 'string' ? msg.mes.trimStart() : '';
+    if (messageText.startsWith('[MEMORY SHARD:')) {
+        return false;
+    }
+
+    return true;
+}
+
+function normalizeReceivedMessageEvent(messageId, messageType) {
+    if (messageId && typeof messageId === 'object') {
+        const resolvedMessageId = messageId.messageId ?? messageId.id ?? messageId.index;
+        const resolvedMessageType = messageType ?? messageId.messageType ?? messageId.type;
+        return { messageId: resolvedMessageId, messageType: resolvedMessageType };
+    }
+
+    return { messageId, messageType };
+}
+
+async function onNewMessage(messageId, messageType, sourceEventType = event_types.MESSAGE_RECEIVED) {
     // Update cache after new message
     cacheCurrentChatState();
 
-    const context = SillyTavern.getContext();
-    if (!context || !context.chat || context.chat.length === 0) return;
-
-    if (settings.mode === 'auto') {
-        const currentIndex = context.chat.length - 1;
-        const messagesSinceLastSummary = currentIndex - lastSummarizedIndex;
-
-        if (messagesSinceLastSummary >= settings.autoInterval) {
-            const startIdx = Math.max(0, lastSummarizedIndex + 1);
-            console.log(`[${MODULE_NAME}] Auto-triggering summarization: messages ${startIdx} to ${currentIndex}`);
-            runSummarization(startIdx, currentIndex, settings);
-        }
+    if (settings.mode !== 'auto') {
+        return;
     }
 
+    if (isAutoSummarizing) {
+        console.log(`[${MODULE_NAME}] Auto summarization already running, skipping trigger evaluation`);
+        return;
+    }
+
+    const context = SillyTavern.getContext();
+    const chat = context?.chat;
+    if (!Array.isArray(chat) || chat.length === 0) {
+        return;
+    }
+
+    const normalizedEvent = normalizeReceivedMessageEvent(messageId, messageType);
+    if (!shouldQualifyAutoMessage(normalizedEvent.messageId, normalizedEvent.messageType, sourceEventType, chat)) {
+        return;
+    }
+
+    const currentIndex = Number(normalizedEvent.messageId);
+    const boundedLastSummarizedIndex = Math.min(Math.max(lastSummarizedIndex, -1), currentIndex);
+    const autoInterval = Math.max(1, Number.parseInt(settings.autoInterval, 10) || 1);
+    const messagesSinceLastSummary = currentIndex - boundedLastSummarizedIndex;
+
+    if (messagesSinceLastSummary < autoInterval) {
+        return;
+    }
+
+    const startIdx = Math.max(0, boundedLastSummarizedIndex + 1);
+    if (startIdx > currentIndex) {
+        return;
+    }
+
+    console.log(`[${MODULE_NAME}] Auto-triggering summarization: messages ${startIdx} to ${currentIndex}`);
+    isAutoSummarizing = true;
+
+    try {
+        await runSummarization(startIdx, currentIndex, settings);
+    } finally {
+        isAutoSummarizing = false;
+    }
 }
 
 /**
@@ -333,6 +410,7 @@ jQuery(async () => {
     // Run migration for any old settings formats
     migrateSettings(settings);
     saveSettings(settings);
+    setLastSummarizedIndexCallback(setLastSummarizedIndex);
 
     // Ensure default prompt exists
     ensureDefaultPrompt(settings);
@@ -511,8 +589,7 @@ jQuery(async () => {
     }, 1000);
 
     // Register event handlers
-    eventSource.on(event_types.MESSAGE_SENT, onNewMessage);
-    eventSource.on(event_types.MESSAGE_RECEIVED, onNewMessage);
+    eventSource.on(event_types.MESSAGE_RECEIVED, (messageId, messageType) => onNewMessage(messageId, messageType, event_types.MESSAGE_RECEIVED));
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.MESSAGE_DELETED, onMessageDeleted);
     eventSource.on(event_types.MESSAGE_INSERTED, onMessageInserted);

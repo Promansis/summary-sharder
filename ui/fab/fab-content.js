@@ -93,7 +93,7 @@ function buildActionsPanel(snapshot) {
         if (snapshot.actions.stop) {
             items.push(actionBtn('stop', 'fa-stop', 'Stop'));
         }
-        sections.push({ title: 'Summary Mode', items });
+        sections.push({ title: 'Summary Mode', items, layout: 'grid' });
     }
 
     // Sharder Mode section
@@ -106,7 +106,7 @@ function buildActionsPanel(snapshot) {
         if (snapshot.actions.stop) {
             items.push(actionBtn('stop', 'fa-stop', 'Stop'));
         }
-        sections.push({ title: 'Sharder Mode', items });
+        sections.push({ title: 'Sharder Mode', items, layout: 'grid' });
     }
 
     // RAG section
@@ -116,7 +116,7 @@ function buildActionsPanel(snapshot) {
             actionBtn('purge-vectors', 'fa-trash', 'Purge Vectors'),
             actionBtn('browse-vectors', 'fa-compass', 'Browse Vectors'),
         ];
-        sections.push({ title: 'RAG', items });
+        sections.push({ title: 'RAG', items, layout: 'grid' });
     }
 
     return `<div class="ss-fab-panel-content">${renderSections(sections)}</div>`;

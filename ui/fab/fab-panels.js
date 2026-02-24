@@ -133,6 +133,18 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
     const onClick = (event) => {
         const startedAt = performance.now();
         try {
+            // Close on backdrop click (sheet mode)
+            if (event.target === root && root.classList.contains('ss-fab-sheet-active')) {
+                const activePanel = root.querySelector('.ss-fab-panel.is-active');
+                if (activePanel) {
+                    const panelId = activePanel.dataset.panelId;
+                    if (panelId) {
+                        togglePanel(panelId);
+                    }
+                }
+                return;
+            }
+
             const actionButton = event.target.closest('[data-action]');
             if (actionButton) {
                 const action = actionButton.dataset.action;
@@ -155,6 +167,18 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
     };
 
     const onKeydown = (event) => {
+        // Close sheet on Escape key
+        if (event.key === 'Escape' && root.classList.contains('ss-fab-sheet-active')) {
+            const activePanel = root.querySelector('.ss-fab-panel.is-active');
+            if (activePanel) {
+                const panelId = activePanel.dataset.panelId;
+                if (panelId) {
+                    togglePanel(panelId);
+                }
+            }
+            return;
+        }
+
         const wheelButton = event.target.closest('[data-fab-wheel]');
         if (!wheelButton) return;
         if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -274,15 +298,16 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
     }
 
     function positionActivePanel(center) {
+        const noActivePanel = !activePanelId;
         panelElements.forEach((panel, panelId) => {
             if (panelId !== activePanelId) {
-                hidePanel(panel);
+                hidePanel(panel, noActivePanel);
                 return;
             }
 
             const anchor = wheelAnchors.get(panelId);
             if (!anchor) {
-                hidePanel(panel);
+                hidePanel(panel, true);
                 return;
             }
 
@@ -295,12 +320,48 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
                 panelSize,
                 isMobileViewport,
             });
-            panel.style.left = `${placement.x}px`;
-            panel.style.top = `${placement.y}px`;
-            panel.style.setProperty('--ss-fab-arrow-offset', `${placement.arrowOffset}px`);
-            panel.dataset.arrow = placement.arrowSide;
+
+            if (shouldUseSheetMode(placement, isMobileViewport)) {
+                applySheetMode(panel);
+            } else {
+                applyPopoverMode(panel, placement);
+            }
+
             panel.classList.add('is-active');
         });
+    }
+
+    function applySheetMode(panel) {
+        panel.classList.add('ss-fab-panel-sheet');
+        panel.dataset.arrow = 'none';
+        panel.style.left = '';
+        panel.style.top = '';
+        panel.style.setProperty('--ss-fab-arrow-offset', '0px');
+
+        // ARIA for sheet mode
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+
+        // Mark container for backdrop
+        const container = panel.closest('.ss-fab-panels');
+        if (container) {
+            container.classList.add('ss-fab-sheet-active');
+            container.setAttribute('aria-hidden', 'false');
+        }
+    }
+
+    function applyPopoverMode(panel, placement) {
+        panel.classList.remove('ss-fab-panel-sheet');
+        panel.style.left = `${placement.x}px`;
+        panel.style.top = `${placement.y}px`;
+        panel.dataset.arrow = placement.arrowSide;
+        panel.style.setProperty('--ss-fab-arrow-offset', `${placement.arrowOffset}px`);
+
+        // Remove backdrop
+        const container = panel.closest('.ss-fab-panels');
+        if (container) {
+            container.classList.remove('ss-fab-sheet-active');
+        }
     }
 
     function getPanelSize(panelId, panel) {
@@ -491,12 +552,30 @@ function getPopoverPlacement({ anchor, fabCenter, anchorRect, wheelAnchors, pane
     const preferredArrowSide = getArrowSide(direction);
     const sideOrder = getPlacementSideOrder(preferredArrowSide);
     const centerBias = isMobileViewport ? 0.16 : 0;
-    const radialGap = (anchor.rect?.width || 30) / 2 + PANEL_GAP_PX;
+    const baseGap = (anchor.rect?.width || 30) / 2 + PANEL_GAP_PX;
+    const mobileExtraGap = isMobileViewport ? 24 : 0;
+    const radialGap = baseGap + mobileExtraGap;
     const exclusions = getPanelExclusions(fabCenter, anchorRect, wheelAnchors);
+
+    // Mobile: bias side order based on FAB vertical position
+    let mobileSideOrder = sideOrder;
+    if (isMobileViewport) {
+        const fabVerticalPosition = fabCenter.y / window.innerHeight;
+
+        // FAB in bottom half (> 0.5) → prefer top placement
+        if (fabVerticalPosition > 0.5) {
+            mobileSideOrder = reorderSidesForMobile(sideOrder, 'top');
+        }
+        // FAB in top half (< 0.5) → prefer bottom placement
+        else if (fabVerticalPosition < 0.5) {
+            mobileSideOrder = reorderSidesForMobile(sideOrder, 'bottom');
+        }
+    }
+    const finalSideOrder = isMobileViewport ? mobileSideOrder : sideOrder;
 
     let bestPlacement = null;
 
-    for (const arrowSide of sideOrder) {
+    for (const arrowSide of finalSideOrder) {
         const basePlacement = getPlacementForSide(arrowSide, anchor, size, radialGap);
         let x = basePlacement.x;
         let y = basePlacement.y;
@@ -550,19 +629,40 @@ function getPopoverPlacement({ anchor, fabCenter, anchorRect, wheelAnchors, pane
     };
 }
 
-function hidePanel(panel) {
+function shouldUseSheetMode(placement, isMobileViewport) {
+    if (!isMobileViewport) return false;
+    if (!placement) return false;
+
+    // Use sheet mode if collision is unresolved
+    return placement.collides === true;
+}
+
+function hidePanel(panel, clearSheetBackdrop = false) {
     panel.classList.remove('is-active');
+    panel.classList.remove('ss-fab-panel-sheet');
+    panel.removeAttribute('aria-modal');
     panel.style.left = '-9999px';
     panel.style.top = '-9999px';
+
+    if (clearSheetBackdrop) {
+        const container = panel.closest('.ss-fab-panels');
+        if (container) {
+            container.classList.remove('ss-fab-sheet-active');
+        }
+    }
 }
 
 function measurePanel(panel) {
     const startedAt = performance.now();
     const wasActive = panel.classList.contains('is-active');
+    const wasSheet = panel.classList.contains('ss-fab-panel-sheet');
     const previousLeft = panel.style.left;
     const previousTop = panel.style.top;
     const previousVisibility = panel.style.visibility;
 
+    if (wasSheet) {
+        panel.classList.remove('ss-fab-panel-sheet');
+    }
     if (!wasActive) {
         panel.classList.add('is-active');
     }
@@ -581,6 +681,9 @@ function measurePanel(panel) {
 
     if (!wasActive) {
         panel.classList.remove('is-active');
+    }
+    if (wasSheet) {
+        panel.classList.add('ss-fab-panel-sheet');
     }
 
     recordFabPanelsPerfSample('measurePanel', performance.now() - startedAt);
@@ -635,6 +738,11 @@ function getPlacementSideOrder(preferredSide) {
         bottom: ['bottom', 'top', 'right', 'left'],
     };
     return fallbackBySide[preferredSide] || ['left', 'right', 'top', 'bottom'];
+}
+
+function reorderSidesForMobile(originalOrder, preferredSide) {
+    const filtered = originalOrder.filter(side => side !== preferredSide);
+    return [preferredSide, ...filtered];
 }
 
 function getPlacementForSide(arrowSide, anchor, size, radialGap) {

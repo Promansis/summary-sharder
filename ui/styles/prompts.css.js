@@ -517,6 +517,14 @@ export const PROMPTS_CSS = `
     margin-left: 25px;
 }
 
+.ss-profile-api-selection {
+    margin: 10px 0 0 25px;
+}
+
+.ss-api-profile-warning {
+    margin: 8px 0 0 25px;
+}
+
 .ss-api-select {
     width: 100%;
     max-width: 400px;

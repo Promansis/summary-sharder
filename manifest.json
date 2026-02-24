@@ -6,6 +6,6 @@
     "generate_interceptor": "summary_sharder_rearrangeChat",
     "js": "index.js",
     "author": "Promansis",
-    "version": "0.1.0",    
+    "version": "0.9",    
     "homePage": "https://github.com/Promansis/summary-sharder"
 }

@@ -38,7 +38,7 @@ An optional **RAG pipeline** vectorizes shards and automatically injects relevan
 - **Themes** — 8 built-in themes plus custom theme creation/import/export
 - **FAB** — Draggable floating action button with quick access to all features
 
-> 📖 **[Full Feature Documentation →](docs/FEATURES.md)**
+> 📖 **[Full Feature Documentation →](FEATURES.md)**
 
 ---
 
@@ -111,7 +111,7 @@ Clone into `data/<user-data>/extensions/third-party/summary-sharder` and restart
 
 
 ## 🙌 Credits 
- - [TheLonleyDevil](https://github.com/TheLonelyDevil9/) - For listening to my rambling and stopping (trying to) my scope drift and distractions
+ - [TheLonelyDevil](https://github.com/TheLonelyDevil9/) - For listening to my rambling and stopping (trying to) my scope drift and distractions
  - [Coneja-Chibi](https://github.com/Coneja-Chibi) - Similharity and VectHare creator - Started my RAG journey with Vecthare, Similharity is a lifesaver.
 
 ## Author
