@@ -131,7 +131,7 @@ export function getDefaultSettings() {
                 useSillyTavernAPI: false,
                 apiConfigId: null,
                 queueDelayMs: 0,
-                temperature: 0.25,
+                temperature: 0.3,
                 topP: 1,
                 maxTokens: 8096,
                 postProcessing: '',
@@ -171,6 +171,7 @@ export function getDefaultSettings() {
             // Backend
             backend: 'vectra',              // 'vectra' | 'lancedb' | 'qdrant' | 'milvus'
             source: 'transformers',         // Embedding source (from Similharity plugin)
+            embeddingMode: 'similharity',   // 'similharity' (proxy via plugin) | 'direct' (call external API directly)
             apiUrl: '',                     // Custom embedding API URL override
             model: '',                      // Embedding model (provider-specific)
             embeddingSecretId: null,        // Secret ID for embedding API key in ST secrets store
@@ -226,6 +227,7 @@ export function getDefaultSettings() {
             // Backend
             backend: 'vectra',
             source: 'transformers',
+            embeddingMode: 'similharity',
             apiUrl: '',
             model: '',
             embeddingSecretId: null,

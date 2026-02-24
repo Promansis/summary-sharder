@@ -11,6 +11,60 @@ import { resolveRagEmbeddingApiKey } from './rag-secrets.js';
 const LOG_PREFIX = '[SummarySharder:RAG]';
 const PLUGIN_BASE = '/api/plugins/similharity';
 
+/**
+ * Check whether direct embedding mode is active.
+ * @param {Object} ragSettings
+ * @returns {boolean}
+ */
+function isDirectEmbeddingMode(ragSettings) {
+    return String(ragSettings?.embeddingMode || '').toLowerCase() === 'direct';
+}
+
+/**
+ * Call an external OpenAI-compatible embedding API directly from the browser.
+ * Returns an array of embedding vectors (one per input text).
+ * @param {string[]} texts - Input texts to embed
+ * @param {Object} ragSettings - RAG settings containing apiUrl, model, etc.
+ * @param {string} [apiKeyOverride=''] - Optional runtime API key override
+ * @returns {Promise<number[][]>} Array of embedding vectors
+ */
+async function fetchDirectEmbedding(texts, ragSettings, apiKeyOverride = '') {
+    const apiUrl = String(ragSettings?.apiUrl || '').trim();
+    if (!apiUrl) throw new Error('Direct embedding: API URL is missing');
+
+    const apiKey = apiKeyOverride || await resolveRagEmbeddingApiKey(ragSettings);
+    const model = String(ragSettings?.model || '').trim();
+
+    // Build OpenAI-compatible /v1/embeddings request
+    const url = apiUrl.endsWith('/embeddings') ? apiUrl
+        : apiUrl.replace(/\/+$/, '') + '/embeddings';
+
+    const headers = { 'Content-Type': 'application/json' };
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
+    const body = { input: texts };
+    if (model) body.model = model;
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Direct embedding failed (${response.status}): ${errorText}`);
+    }
+
+    const data = await response.json();
+    // OpenAI format: { data: [{ embedding: [...], index: 0 }, ...] }
+    if (!Array.isArray(data?.data)) {
+        throw new Error('Direct embedding: unexpected response format');
+    }
+    data.data.sort((a, b) => a.index - b.index);
+    return data.data.map(d => d.embedding);
+}
+
 function fnv1a32(input, seed = 2166136261) {
     let hash = seed >>> 0;
     const str = String(input || '');
@@ -100,6 +154,12 @@ function getProviderRequestParams(ragSettings, embeddingApiKey = '') {
         if (apiUrl) {
             params.apiUrl = apiUrl;
         }
+    }
+
+    if (source === 'openai' || source === 'togetherai' || source === 'mistral' || source === 'electronhub' || source === 'openrouter') {
+        const apiUrl = pick('apiUrl', 'api_url', 'url', 'endpointUrl');
+        if (apiUrl) params.apiUrl = apiUrl;
+        if (embeddingApiKey) params.apiKey = embeddingApiKey;
     }
 
     if (source === 'extras') {
@@ -221,7 +281,7 @@ export async function initBackend(backend, config) {
  * @returns {Promise<{success: boolean, inserted: number}>}
  */
 export async function insertChunks(collectionId, items, ragSettings) {
-    const safeItems = (ragSettings?.backend === 'qdrant')
+    let safeItems = (ragSettings?.backend === 'qdrant')
         ? (items || []).map(item => {
             const fallbackIdentity = `${item?.index ?? 0}|${String(item?.text || '')}`;
             return {
@@ -229,7 +289,13 @@ export async function insertChunks(collectionId, items, ragSettings) {
                 hash: toQdrantPointId(item?.hash, fallbackIdentity),
             };
         })
-        : items;
+        : (items || []);
+
+    if (isDirectEmbeddingMode(ragSettings)) {
+        const texts = safeItems.map(item => String(item.text || ''));
+        const vectors = await fetchDirectEmbedding(texts, ragSettings);
+        safeItems = safeItems.map((item, i) => ({ ...item, vector: vectors[i] }));
+    }
 
     const body = await buildRequestBody(collectionId, ragSettings, { items: safeItems });
     const data = await pluginFetch('/chunks/insert', {
@@ -249,11 +315,16 @@ export async function insertChunks(collectionId, items, ragSettings) {
  * @returns {Promise<{results: Array<{hash: string, text: string, score: number, metadata: Object}>}>}
  */
 export async function queryChunks(collectionId, searchText, topK, threshold, ragSettings) {
-    const body = await buildRequestBody(collectionId, ragSettings, {
-        searchText,
-        topK,
-        threshold,
-    });
+    const extra = { topK, threshold };
+
+    if (isDirectEmbeddingMode(ragSettings)) {
+        const [vector] = await fetchDirectEmbedding([searchText], ragSettings);
+        extra.queryVector = vector;
+    } else {
+        extra.searchText = searchText;
+    }
+
+    const body = await buildRequestBody(collectionId, ragSettings, extra);
     const data = await pluginFetch('/chunks/query', {
         method: 'POST',
         body,
@@ -272,10 +343,21 @@ export async function queryChunks(collectionId, searchText, topK, threshold, rag
  * @returns {Promise<{results: Array}>}
  */
 export async function hybridQuery(collectionId, searchText, topK, threshold, ragSettings, hybridOptions) {
-    const extra = { searchText, topK, threshold };
+    const extra = { topK, threshold };
+
+    if (isDirectEmbeddingMode(ragSettings)) {
+        const [vector] = await fetchDirectEmbedding([searchText], ragSettings);
+        extra.queryVector = vector;
+    } else {
+        extra.searchText = searchText;
+    }
+
     if (hybridOptions) {
         extra.hybridOptions = hybridOptions;
     }
+    // searchText is still needed for BM25 keyword component of hybrid search
+    extra.searchText = searchText;
+
     const body = await buildRequestBody(collectionId, ragSettings, extra);
     const data = await pluginFetch('/chunks/hybrid-query', {
         method: 'POST',
@@ -402,6 +484,17 @@ export async function testEmbeddingConnection(
     text = 'Summary Sharder embedding connection test',
     options = {},
 ) {
+    if (isDirectEmbeddingMode(ragSettings)) {
+        const overrideApiKey = String(options?.apiKeyOverride || '').trim();
+        const vectors = await fetchDirectEmbedding(
+            [text],
+            ragSettings,
+            overrideApiKey,
+        );
+        const dimensions = Array.isArray(vectors?.[0]) ? vectors[0].length : 0;
+        return { success: dimensions > 0, dimensions };
+    }
+
     const overrideApiKey = String(options?.apiKeyOverride || '').trim();
     const embeddingApiKey = overrideApiKey || await resolveRagEmbeddingApiKey(ragSettings);
     const providerParams = getProviderRequestParams(ragSettings, embeddingApiKey);

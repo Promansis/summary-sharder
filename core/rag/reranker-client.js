@@ -153,7 +153,10 @@ export async function rerankDocuments(query, documents, ragSettings, options = {
             if (apiKey) {
                 headers.Authorization = `Bearer ${apiKey}`;
             }
-            response = await fetch(apiUrl, {
+            // Normalize URL: append /rerank if not already present
+            const directUrl = apiUrl.endsWith('/rerank') ? apiUrl
+                : apiUrl.replace(/\/+$/, '') + '/rerank';
+            response = await fetch(directUrl, {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(requestBody),

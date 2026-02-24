@@ -206,9 +206,13 @@ function renderModalHtml(rag, isSharder) {
                             </select>
                         </div>
                         <div class="ss-block">
-                            <label for="ss-rag-api-url">Embedding API URL (optional override)</label>
+                            <label for="ss-rag-embedding-mode">Embedding Transport</label>
+                            <div id="ss-rag-embedding-mode-host"></div>
+                        </div>
+                        <div class="ss-block">
+                            <label id="ss-rag-api-url-label" for="ss-rag-api-url">Embedding API URL (optional override)</label>
                             <input id="ss-rag-api-url" class="text_pole ss-rag-control" type="text" value="${rag.apiUrl || ''}" placeholder="Leave blank to use default; e.g. http://localhost:11434" />
-                            <p class="ss-rag-inline-hint ss-text-hint">Overrides the default URL for this source. Useful for OpenAI-compatible proxies or custom endpoints.</p>
+                            <p id="ss-rag-api-url-hint" class="ss-rag-inline-hint ss-text-hint">Overrides the default URL for this source. Useful for OpenAI-compatible proxies or custom endpoints.</p>
                         </div>
                         <div class="ss-block">
                             <label for="ss-rag-model">Embedding Model (optional)</label>
@@ -532,6 +536,28 @@ function updateExpansionUi() {
     sceneWrap?.classList.toggle('ss-hidden', !sceneEnabled);
 }
 
+function updateEmbeddingModeUi() {
+    const mode = document.getElementById('ss-rag-embedding-mode')?.value || 'similharity';
+    const urlLabel = document.getElementById('ss-rag-api-url-label');
+    const urlHint = document.getElementById('ss-rag-api-url-hint');
+    const urlInput = document.getElementById('ss-rag-api-url');
+    if (urlLabel) {
+        urlLabel.textContent = mode === 'direct'
+            ? 'Embedding Endpoint URL (required)'
+            : 'Embedding API URL (optional override)';
+    }
+    if (urlInput) {
+        urlInput.placeholder = mode === 'direct'
+            ? 'https://api.example.com/v1 — /embeddings is appended automatically'
+            : 'Leave blank to use default; e.g. http://localhost:11434';
+    }
+    if (urlHint) {
+        urlHint.textContent = mode === 'direct'
+            ? 'Direct mode calls this URL from the browser. Provide your base URL (e.g. https://api.example.com/v1) — /embeddings is appended automatically.'
+            : 'Overrides the default URL for this source. Useful for OpenAI-compatible proxies or custom endpoints.';
+    }
+}
+
 function updateRerankerUi() {
     const enabled = !!document.getElementById('ss-rag-reranker-enabled')?.checked;
     const mode = document.getElementById('ss-rag-reranker-mode')?.value || 'similharity';
@@ -540,11 +566,17 @@ function updateRerankerUi() {
     const urlHint = document.getElementById('ss-rag-reranker-url-hint');
     wrap?.classList.toggle('ss-hidden', !enabled);
     if (urlLabel) {
-        urlLabel.textContent = mode === 'direct' ? 'Re-ranker Endpoint URL' : 'Re-ranker API URL';
+        urlLabel.textContent = mode === 'direct' ? 'Re-ranker Endpoint URL (required)' : 'Re-ranker API URL';
+    }
+    const urlInput = document.getElementById('ss-rag-reranker-url');
+    if (urlInput) {
+        urlInput.placeholder = mode === 'direct'
+            ? 'https://api.example.com/v1 — /rerank is appended automatically'
+            : 'http://localhost:8080/rerank';
     }
     if (urlHint) {
         urlHint.textContent = mode === 'direct'
-            ? 'Direct external re-ranker endpoint URL.'
+            ? 'Direct mode calls this URL from the browser. Provide your base URL (e.g. https://api.example.com/v1) — /rerank is appended automatically.'
             : 'Upstream reranker URL passed to Similharity.';
     }
 }
@@ -568,6 +600,7 @@ function readRagDraft(base, isSharder) {
     draft.enabled = !!document.getElementById('ss-rag-enabled')?.checked;
     draft.backend = document.getElementById('ss-rag-backend')?.value || 'vectra';
     draft.source = document.getElementById('ss-rag-source')?.value?.trim() || 'transformers';
+    draft.embeddingMode = document.getElementById('ss-rag-embedding-mode')?.value || 'similharity';
     draft.apiUrl = document.getElementById('ss-rag-api-url')?.value?.trim() || '';
     draft.model = document.getElementById('ss-rag-model')?.value?.trim() || '';
 
@@ -771,6 +804,7 @@ export async function openRagSettingsModal(settings) {
         enabled: src.enabled ?? false,
         backend: src.backend || 'vectra',
         source: src.source || 'transformers',
+        embeddingMode: src.embeddingMode || 'similharity',
         apiUrl: src.apiUrl || '',
         model: src.model || '',
         embeddingSecretId: src.embeddingSecretId || null,
@@ -930,6 +964,16 @@ export async function openRagSettingsModal(settings) {
         mountRangePair('ss-rag-scene-max-host', 'ss-rag-scene-max', 1, 25, 1, rag.maxSceneExpansionChunks ?? 10);
 
         mountSegmentedToggle(
+            'ss-rag-embedding-mode-host',
+            'ss-rag-embedding-mode',
+            [
+                { value: 'similharity', label: 'Similharity Proxy' },
+                { value: 'direct', label: 'Direct Endpoint' },
+            ],
+            rag.embeddingMode || 'similharity',
+        );
+
+        mountSegmentedToggle(
             'ss-rag-reranker-mode-host',
             'ss-rag-reranker-mode',
             [
@@ -990,6 +1034,7 @@ export async function openRagSettingsModal(settings) {
         updateChunkingUi();
         updateHybridUi();
         updateExpansionUi();
+        updateEmbeddingModeUi();
         updateRerankerUi();
         updateVectorizationLorebookUi();
         setupRagAccordionHandlers();
@@ -1042,6 +1087,7 @@ export async function openRagSettingsModal(settings) {
             'ss-rag-source',
             'ss-rag-model',
             'ss-rag-api-url',
+            'ss-rag-embedding-mode',
             'ss-rag-reranker-enabled',
             'ss-rag-reranker-mode',
             'ss-rag-reranker-url',
@@ -1067,6 +1113,9 @@ export async function openRagSettingsModal(settings) {
             });
         }
 
+        document.getElementById('ss-rag-embedding-mode')?.addEventListener('change', () => {
+            updateEmbeddingModeUi();
+        });
         document.getElementById('ss-rag-reranker-enabled')?.addEventListener('change', () => {
             updateRerankerUi();
         });
