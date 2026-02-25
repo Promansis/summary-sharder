@@ -4,6 +4,7 @@
  */
 
 import { getApiKeyForConfig, getConfigById } from './legacy-api-config.js';
+import { getActiveApiFeature } from '../../ui/common/active-mode-state.js';
 
 /**
  * Default generation parameters per feature
@@ -92,6 +93,12 @@ export async function getFeatureApiSettings(settings, feature) {
             selectedModel: config.model || '',
             ...generationParams
         };
+    }
+
+    // ChatManager has no dedicated UI config — use the active mode's API settings entirely
+    if (feature === 'chatManager') {
+        const fallbackFeature = getActiveApiFeature(settings);
+        return getFeatureApiSettings(settings, fallbackFeature);
     }
 
     throw new Error(`${feature} API not configured`);
