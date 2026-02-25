@@ -27,6 +27,7 @@ async function callSharderApi(settings, systemPrompt, userPrompt) {
         maxTokens: effective.maxTokens,
         signal: getAbortSignal(),
         messageFormat: effective.messageFormat,
+        removeStopStrings: effective.removeStopStrings === true,
     };
 
     if (effective.useSillyTavernAPI) {

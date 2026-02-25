@@ -3,7 +3,17 @@
  * Single source of truth for all API calls in Summary Sharder
  */
 
-import { generateRaw, getRequestHeaders } from '../../../../../../script.js';
+import {
+    extractMessageFromData,
+    generateRaw,
+    getRequestHeaders,
+    main_api,
+} from '../../../../../../script.js';
+import {
+    createGenerationParameters,
+    getChatCompletionModel,
+    oai_settings,
+} from '../../../../../openai.js';
 
 /**
  * Normalize API URL by removing endpoint-specific paths
@@ -32,10 +42,12 @@ export function normalizeApiUrl(url) {
 
 /**
  * @typedef {Object} APICallOptions
- * @property {number} [temperature=0.7] - Temperature for generation (external API only)
+ * @property {number} [temperature=0.7] - Temperature for generation
  * @property {number} [topP=1] - Nucleus sampling threshold (0-1)
  * @property {number} [maxTokens=4096] - Maximum tokens to generate
  * @property {string} [messageFormat='minimal'] - Message format: 'minimal' or 'alternating'
+ * @property {AbortSignal|null} [signal=null] - Optional abort signal
+ * @property {boolean} [removeStopStrings=false] - Remove stop strings for ST/Connection Profile generation
  */
 
 /**
@@ -62,33 +74,249 @@ function buildMessages(systemPrompt, userPrompt, messageFormat) {
 }
 
 /**
- * Call SillyTavern's current chat API using generateRaw (without context injection)
+ * Convert unknown values to Error instances.
+ * @param {unknown} value
+ * @param {string} fallbackMessage
+ * @returns {Error}
+ */
+function toError(value, fallbackMessage) {
+    if (value instanceof Error) {
+        return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+        return new Error(value.trim());
+    }
+    return new Error(fallbackMessage);
+}
+
+/**
+ * Normalize generated text and treat whitespace-only responses as empty.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function normalizeGeneratedText(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+    return value.trim();
+}
+
+/**
+ * Clone current OAI settings defensively for compatibility retries.
+ * @returns {Object}
+ */
+function cloneOaiSettings() {
+    if (typeof structuredClone === 'function') {
+        return structuredClone(oai_settings);
+    }
+    return JSON.parse(JSON.stringify(oai_settings));
+}
+
+/**
+ * Extract assistant text from chat-completions response.
+ * @param {any} data
+ * @returns {string}
+ */
+function extractAssistantText(data) {
+    const fromExtractor = normalizeGeneratedText(extractMessageFromData(data, 'openai'));
+    if (fromExtractor) {
+        return fromExtractor;
+    }
+
+    const fromMessage = normalizeGeneratedText(data?.choices?.[0]?.message?.content);
+    if (fromMessage) {
+        return fromMessage;
+    }
+
+    return normalizeGeneratedText(data?.content);
+}
+
+/**
+ * Execute one compatibility request attempt.
+ * @param {string} label
+ * @param {Object} body
+ * @param {AbortSignal|null} signal
+ * @returns {Promise<string>}
+ */
+async function runCompatibilityAttempt(label, body, signal) {
+    const fetchOptions = {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(body),
+    };
+
+    if (signal) {
+        fetchOptions.signal = signal;
+    }
+
+    const response = await fetch('/api/backends/chat-completions/generate', fetchOptions);
+    const rawText = await response.text();
+
+    if (!response.ok) {
+        throw new Error(`${label}: Compatibility API error (${response.status}): ${rawText || response.statusText}`);
+    }
+
+    let data;
+    try {
+        data = rawText ? JSON.parse(rawText) : {};
+    } catch {
+        throw new Error(`${label}: Compatibility API returned non-JSON response: ${(rawText || '').slice(0, 300)}`);
+    }
+
+    if (data?.error) {
+        throw new Error(`${label}: ${data.error.message || 'Compatibility API returned an error'}`);
+    }
+
+    const text = extractAssistantText(data);
+    if (text) {
+        return text;
+    }
+
+    const rawMessageContent = data?.choices?.[0]?.message?.content;
+    const rawLength = typeof rawMessageContent === 'string' ? rawMessageContent.length : null;
+    const preview = typeof rawMessageContent === 'string'
+        ? JSON.stringify(rawMessageContent.slice(0, 40))
+        : '[non-string]';
+
+    throw new Error(`${label}: Compatibility response contained no usable assistant text (rawLen=${rawLength} rawPreview=${preview})`);
+}
+
+/**
+ * Compatibility path for providers/proxies that reject quiet-mode requests.
+ * Uses a swipe-shaped request with stream disabled.
+ * @param {Array<{role: string, content: string}>} messages
+ * @param {{maxTokens: number, temperature?: number|null, topP?: number|null, signal?: AbortSignal|null, removeStopStrings?: boolean}} options
+ * @returns {Promise<string>}
+ */
+async function callSillyTavernAPICompatibility(messages, options) {
+    const {
+        maxTokens = 4096,
+        temperature = null,
+        topP = null,
+        signal = null,
+        removeStopStrings = false,
+    } = options || {};
+
+    if (main_api !== 'openai') {
+        throw new Error(`Compatibility retry is only available for main_api=openai (current: ${main_api || 'unknown'})`);
+    }
+
+    const compatSettings = cloneOaiSettings();
+    compatSettings.openai_max_tokens = maxTokens;
+    if (typeof temperature === 'number' && Number.isFinite(temperature)) {
+        compatSettings.temp_openai = temperature;
+    }
+    if (typeof topP === 'number' && Number.isFinite(topP)) {
+        compatSettings.top_p_openai = topP;
+    }
+
+    const model = getChatCompletionModel(compatSettings);
+    const { generate_data } = await createGenerationParameters(compatSettings, model, 'swipe', messages);
+    const defaultBody = {
+        ...generate_data,
+        type: 'swipe',
+        stream: false,
+        max_tokens: maxTokens,
+        n: 1,
+    };
+
+    const hasStops = Array.isArray(defaultBody.stop) && defaultBody.stop.length > 0;
+    const noStopBody = hasStops ? { ...defaultBody, stop: [] } : defaultBody;
+
+    const attempts = [];
+    if (removeStopStrings && hasStops) {
+        attempts.push({ label: 'no-stop', body: noStopBody });
+    } else {
+        attempts.push({ label: 'default-stop', body: defaultBody });
+    }
+
+    const errors = [];
+    for (let i = 0; i < attempts.length; i++) {
+        const attempt = attempts[i];
+        try {
+            return await runCompatibilityAttempt(attempt.label, attempt.body, signal);
+        } catch (error) {
+            const normalizedError = toError(error, `${attempt.label} compatibility request failed`);
+            errors.push(normalizedError.message);
+
+        }
+    }
+
+    throw new Error(errors.join('. ') || 'Compatibility retry failed');
+}
+
+/**
+ * Call SillyTavern's current chat API using generateRaw (without context injection).
+ * For custom chat-completion source, use no-stop compatibility path first to avoid
+ * provider-side truncation to newline from shared stop strings.
  * @param {string} systemPrompt - The system prompt
  * @param {string} userPrompt - The user prompt
  * @param {APICallOptions} [options={}] - Optional parameters
  * @returns {Promise<string>} The API response
  */
 export async function callSillyTavernAPI(systemPrompt, userPrompt, options = {}) {
-    const { maxTokens = 4096, messageFormat = 'minimal' } = options;
+    const {
+        maxTokens = 4096,
+        temperature = null,
+        topP = null,
+        messageFormat = 'minimal',
+        signal = null,
+        removeStopStrings = false
+    } = options;
+    const messages = buildMessages(systemPrompt, userPrompt, messageFormat);
 
-    let result;
-    if (messageFormat === 'alternating') {
-        // Pass full message array to generateRaw for proper role alternation
-        const messages = buildMessages(systemPrompt, userPrompt, messageFormat);
-        result = await generateRaw({ prompt: messages, responseLength: maxTokens });
-    } else {
-        result = await generateRaw({
-            prompt: userPrompt,
-            systemPrompt: systemPrompt,
-            responseLength: maxTokens
-        });
+    if (removeStopStrings) {
+        if (main_api !== 'openai') {
+            console.warn('[SummarySharder] Remove Stop Strings is only supported on chat-completions main_api=openai. Using default quiet path.', {
+                mainApi: main_api,
+            });
+        } else {
+            const source = String(oai_settings?.chat_completion_source || 'unknown');
+            const model = (() => {
+                try {
+                    return String(getChatCompletionModel(oai_settings) || 'unknown');
+                } catch {
+                    return 'unknown';
+                }
+            })();
+            try {
+                return await callSillyTavernAPICompatibility(messages, {
+                    maxTokens,
+                    temperature,
+                    topP,
+                    signal,
+                    removeStopStrings: true,
+                });
+            } catch (error) {
+                const compatibilityFailure = toError(error, 'Remove-stop compatibility request failed');
+                throw new Error(
+                    `SillyTavern API failed with Remove Stop Strings enabled. ` +
+                    `Source=${source} Model=${model}. ${compatibilityFailure.message}`
+                );
+            }
+        }
     }
 
-    if (!result || typeof result !== 'string') {
+    try {
+        let result;
+        if (messageFormat === 'alternating') {
+            result = await generateRaw({ prompt: messages, responseLength: maxTokens });
+        } else {
+            result = await generateRaw({
+                prompt: userPrompt,
+                systemPrompt: systemPrompt,
+                responseLength: maxTokens
+            });
+        }
+
+        const normalized = normalizeGeneratedText(result);
+        if (normalized) {
+            return normalized;
+        }
         throw new Error('No response from SillyTavern API');
+    } catch (error) {
+        throw toError(error, 'SillyTavern quiet request failed');
     }
-
-    return result.trim();
 }
 
 /**
@@ -142,7 +370,7 @@ export async function callExternalAPI(settings, systemPrompt, userPrompt, option
         requestBody.custom_prompt_post_processing = settings.postProcessing;
     }
 
-    // Pass API key via custom_include_headers — ST backend merges these after the default
+    // Pass API key via custom_include_headers - ST backend merges these after the default
     // Authorization header, so this overrides it without touching the api_key_custom secret slot
     if (settings.apiKey) {
         requestBody.custom_include_headers = `Authorization: "Bearer ${settings.apiKey}"`;

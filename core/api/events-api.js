@@ -35,7 +35,8 @@ async function callAPI(settings, systemPrompt, userPrompt, feature = 'events') {
         topP: effectiveSettings.topP,
         maxTokens: effectiveSettings.maxTokens,
         signal: getAbortSignal(),
-        messageFormat: effectiveSettings.messageFormat
+        messageFormat: effectiveSettings.messageFormat,
+        removeStopStrings: effectiveSettings.removeStopStrings === true
     };
 
     if (effectiveSettings.useSillyTavernAPI) {

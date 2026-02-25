@@ -191,6 +191,19 @@ function renderFeatureTab(settings, feature, container) {
                             Recommended for proxy APIs. Applies to ST, External, and Connection Profile modes.
                         </p>
                     </div>
+
+                    <div class="ss-api-option-column">
+                        <label class="checkbox_label" for="${feature}-remove-stop-strings">
+                            <input type="checkbox"
+                                id="${feature}-remove-stop-strings"
+                                ${featureConfig.removeStopStrings === true ? 'checked' : ''} />
+                            <span>Remove Stop Strings</span>
+                        </label>
+                        <p class="ss-api-option-hint">
+                            Sends requests without stop strings for SillyTavern/Connection Profile modes.
+                            Useful for proxies that return empty output when stops are present.
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -287,6 +300,7 @@ function renderFeatureTab(settings, feature, container) {
     const temperatureInput = container.querySelector(`#${feature}-temperature`);
     const topPInput = container.querySelector(`#${feature}-top-p`);
     const maxTokensInput = container.querySelector(`#${feature}-max-tokens`);
+    const removeStopStringsInput = container.querySelector(`#${feature}-remove-stop-strings`);
     const messageFormatHost = container.querySelector(`#${feature}-message-format-host`);
     if (messageFormatHost) {
         const messageFormatToggle = createSegmentedToggle({
@@ -312,6 +326,7 @@ function renderFeatureTab(settings, feature, container) {
         settings.apiFeatures[feature].temperature = Math.min(2, Math.max(0, parseFloat(temperatureInput.value) || 0.4));
         settings.apiFeatures[feature].topP = Math.min(1, Math.max(0, parseFloat(topPInput.value) || 1));
         settings.apiFeatures[feature].maxTokens = Math.min(128000, Math.max(100, parseInt(maxTokensInput.value, 10) || 8096));
+        settings.apiFeatures[feature].removeStopStrings = removeStopStringsInput?.checked === true;
 
         saveSettings(settings);
         console.log(`[SummarySharder] Updated ${feature} generation settings`);
@@ -321,6 +336,7 @@ function renderFeatureTab(settings, feature, container) {
     temperatureInput?.addEventListener('change', saveGenerationSettings);
     topPInput?.addEventListener('change', saveGenerationSettings);
     maxTokensInput?.addEventListener('change', saveGenerationSettings);
+    removeStopStringsInput?.addEventListener('change', saveGenerationSettings);
 
     // Post-processing dropdown handler
     const postProcessingSelect = container.querySelector(`#${feature}-post-processing`);

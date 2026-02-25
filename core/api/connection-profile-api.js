@@ -291,7 +291,7 @@ export function getConnectionProfiles() {
  * @param {string} profileId
  * @param {string} systemPrompt
  * @param {string} userPrompt
- * @param {{temperature?: number, topP?: number, maxTokens?: number, signal?: AbortSignal, messageFormat?: string}} options
+ * @param {{temperature?: number, topP?: number, maxTokens?: number, signal?: AbortSignal, messageFormat?: string, removeStopStrings?: boolean}} options
  * @returns {Promise<string>}
  */
 export async function callConnectionProfileAPI(profileId, systemPrompt, userPrompt, options = {}) {
@@ -314,7 +314,8 @@ export async function callConnectionProfileAPI(profileId, systemPrompt, userProm
         topP = 1,
         maxTokens = 4096,
         signal = null,
-        messageFormat = 'minimal'
+        messageFormat = 'minimal',
+        removeStopStrings = false
     } = options;
 
     const messages = buildMessages(systemPrompt, userPrompt, messageFormat);
@@ -330,6 +331,10 @@ export async function callConnectionProfileAPI(profileId, systemPrompt, userProm
         temperature,
         top_p: topP
     };
+
+    if (removeStopStrings === true) {
+        overridePayload.stop = [];
+    }
 
     let result;
     try {

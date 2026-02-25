@@ -173,7 +173,8 @@ export async function callChatManagerAPI(settings, systemPrompt, userPrompt) {
         temperature: effectiveSettings.temperature,
         topP: effectiveSettings.topP,
         maxTokens: effectiveSettings.maxTokens,
-        messageFormat: effectiveSettings.messageFormat
+        messageFormat: effectiveSettings.messageFormat,
+        removeStopStrings: effectiveSettings.removeStopStrings === true
     };
 
     if (effectiveSettings.useSillyTavernAPI) {
