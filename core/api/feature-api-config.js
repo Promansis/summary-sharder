@@ -9,17 +9,17 @@ import { getApiKeyForConfig, getConfigById } from './legacy-api-config.js';
  * Default generation parameters per feature
  */
 const DEFAULT_GENERATION_PARAMS = {
-    summary: { temperature: 0.4, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal' },
-    sharder: { temperature: 0.25, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal' },
-    events: { temperature: 0.4, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal' },
-    chatManager: { temperature: 0.3, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal' }
+    summary: { temperature: 0.4, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
+    sharder: { temperature: 0.25, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
+    events: { temperature: 0.4, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
+    chatManager: { temperature: 0.3, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false }
 };
 
 /**
  * Get effective API settings for a specific feature
  * @param {Object} settings - Extension settings
  * @param {string} feature - Feature name ('summary', 'sharder', 'events', 'chatManager')
- * @returns {Promise<{useSillyTavernAPI: boolean, useConnectionProfile: boolean, connectionProfileId: string|null, apiUrl: string, apiKey: string, selectedModel: string, temperature: number, topP: number, maxTokens: number, queueDelayMs: number}>}
+ * @returns {Promise<{useSillyTavernAPI: boolean, useConnectionProfile: boolean, connectionProfileId: string|null, apiUrl: string, apiKey: string, selectedModel: string, temperature: number, topP: number, maxTokens: number, queueDelayMs: number, removeStopStrings: boolean}>}
  * @throws {Error} If API is not configured for the feature
  */
 export async function getFeatureApiSettings(settings, feature) {
@@ -33,7 +33,8 @@ export async function getFeatureApiSettings(settings, feature) {
         maxTokens: featureConfig?.maxTokens ?? defaults.maxTokens,
         queueDelayMs: featureConfig?.queueDelayMs ?? defaults.queueDelayMs,
         postProcessing: featureConfig?.postProcessing ?? defaults.postProcessing,
-        messageFormat: featureConfig?.messageFormat ?? defaults.messageFormat
+        messageFormat: featureConfig?.messageFormat ?? defaults.messageFormat,
+        removeStopStrings: featureConfig?.removeStopStrings ?? defaults.removeStopStrings
     };
 
     // Migration fallback - if new structure doesn't exist, use legacy settings

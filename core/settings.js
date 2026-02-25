@@ -126,7 +126,8 @@ export function getDefaultSettings() {
                 topP: 1,                    // Nucleus sampling threshold (0-1)
                 maxTokens: 8096,            // Maximum response tokens
                 postProcessing: '',         // Prompt post-processing mode (external API only)
-                messageFormat: 'minimal'    // Message format: 'minimal' (system+user) or 'alternating' (adds assistant turn)
+                messageFormat: 'minimal',   // Message format: 'minimal' (system+user) or 'alternating' (adds assistant turn)
+                removeStopStrings: false    // Remove stop strings for ST/Connection Profile generation
             },
             sharder: {
                 useSillyTavernAPI: false,
@@ -137,7 +138,8 @@ export function getDefaultSettings() {
                 topP: 1,
                 maxTokens: 8096,
                 postProcessing: '',
-                messageFormat: 'minimal'
+                messageFormat: 'minimal',
+                removeStopStrings: false
             },
             events: {
                 useSillyTavernAPI: false,
@@ -148,7 +150,8 @@ export function getDefaultSettings() {
                 topP: 1,
                 maxTokens: 4096,
                 postProcessing: '',
-                messageFormat: 'minimal'
+                messageFormat: 'minimal',
+                removeStopStrings: false
             },
             chatManager: {
                 useSillyTavernAPI: false,
@@ -159,7 +162,8 @@ export function getDefaultSettings() {
                 topP: 1,
                 maxTokens: 4096,
                 postProcessing: '',
-                messageFormat: 'minimal'
+                messageFormat: 'minimal',
+                removeStopStrings: false
             }
         },
 
@@ -502,6 +506,7 @@ export function migrateSettings(settings) {
                 if (cfg.maxTokens === undefined) { cfg.maxTokens = def.maxTokens; needsMigration = true; }
                 if (cfg.postProcessing === undefined) { cfg.postProcessing = ''; needsMigration = true; }
                 if (cfg.messageFormat === undefined) { cfg.messageFormat = 'minimal'; needsMigration = true; }
+                if (cfg.removeStopStrings === undefined) { cfg.removeStopStrings = false; needsMigration = true; }
                 if (cfg.connectionProfileId === undefined) { cfg.connectionProfileId = null; needsMigration = true; }
             }
         }
