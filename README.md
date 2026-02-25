@@ -17,7 +17,7 @@
 
 ## What Is It?
 
-Summary Sharder is a SillyTavern extension that captures chat history before it falls out of context. It summarizes message ranges into structured "Memory Shards" with 16 labeled sections, manages message visibility, and routes output to system messages or lorebook entries — so nothing important is forgotten. The Memory Sharding concept is based off the Memory Shard prompt by [TheLonleyDevil](https://github.com/TheLonelyDevil9/) .
+Summary Sharder is a SillyTavern extension that captures chat history before it falls out of context. It summarizes message ranges into structured "Memory Shards" with 16 labeled sections, manages message visibility, and routes output to system messages or lorebook entries — so nothing important is forgotten. The Memory Sharding concept is based off the Memory Shard prompt by [TheLonelyDevil](https://github.com/TheLonelyDevil9/) .
 
 An optional **RAG pipeline** vectorizes shards and automatically injects relevant memories into future generations. Shoutout to [Coneja-Chibi](https://github.com/Coneja-Chibi) for the Similharity plugin that made this part possible.
 
