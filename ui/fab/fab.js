@@ -42,6 +42,18 @@ let onBeforeUnload = null;
 const FAB_SIZE_PX = 56;
 const FAB_RADIUS_PX = FAB_SIZE_PX / 2;
 const MOBILE_BREAKPOINT_QUERY = '(max-width: 768px)';
+
+/**
+ * Mobile FAB scale — percentage of default size (100 = current size).
+ * Adjust this single value to resize the FAB + wheel buttons on mobile.
+ * Examples: 75 = 75% size, 100 = unchanged, 120 = 20% larger.
+ */
+const MOBILE_FAB_SCALE_PERCENT = 80;
+
+function getMobileScale() {
+    return isMobileViewport() ? MOBILE_FAB_SCALE_PERCENT / 100 : 1;
+}
+
 const SAFE_VIEWPORT_MARGIN_PX = 8;
 const MOBILE_EXTRA_TAP_PADDING_PX = 6;
 const MIN_NUDGE_DELTA_PX = 2;
@@ -117,6 +129,7 @@ export function initFab(settings, callbacks) {
     } : null;
 
     createFabElement();
+    document.documentElement.style.setProperty('--ss-fab-mobile-scale', MOBILE_FAB_SCALE_PERCENT / 100);
     animator = createFabAnimator(fabElement);
     bindEvents();
     restorePosition();
@@ -402,9 +415,11 @@ async function openPanels() {
         return;
     }
 
+    const openAnchorRect = getFabRect();
     panelsController = createFabPanels({
-        anchorRect: getFabRect(),
+        anchorRect: openAnchorRect,
         panelMarkupById: panelMarkup,
+        mobileScalePercent: MOBILE_FAB_SCALE_PERCENT,
         onAction: (action, button) => {
             void handleAction(action, button);
         },
@@ -419,7 +434,12 @@ async function openPanels() {
         return;
     }
 
-    panelsController.reposition(getFabRect());
+    // Use synchronous layout to prevent rAF-deferred positioning from being
+    // affected by theme CSS mutations or competing callbacks.  Re-use the
+    // anchor rect captured at open-time so the wheel positions stay
+    // consistent with the initial layout (the FAB does not move during the
+    // shard animation on any platform).
+    panelsController.repositionSync(openAnchorRect);
 
     fabState = 'open';
     focusFirstInPanels();
@@ -736,7 +756,7 @@ function restorePosition() {
 }
 
 function clampToViewport(x, y) {
-    const size = FAB_SIZE_PX;
+    const size = FAB_SIZE_PX * getMobileScale();
     const maxX = Math.max(0, window.innerWidth - size);
     const maxY = Math.max(0, window.innerHeight - size);
     return {
@@ -802,7 +822,9 @@ function shouldApplyMobileNudge(home, safeOpen) {
 }
 
 function computeSafeOpenPosition(x, y, viewportInfo = getViewportInfo()) {
-    const wingPadding = SAFE_VIEWPORT_MARGIN_PX + WHEEL_RADIUS_PX + WHEEL_MAX_HALF_EXTENT_PX + MOBILE_EXTRA_TAP_PADDING_PX;
+    const scale = getMobileScale();
+    const fabRadius = FAB_RADIUS_PX * scale;
+    const wingPadding = SAFE_VIEWPORT_MARGIN_PX + (WHEEL_RADIUS_PX * scale) + (WHEEL_MAX_HALF_EXTENT_PX * scale) + MOBILE_EXTRA_TAP_PADDING_PX;
 
     const minCenterX = viewportInfo.offsetLeft + wingPadding;
     const maxCenterX = viewportInfo.offsetLeft + viewportInfo.width - wingPadding;
@@ -810,19 +832,19 @@ function computeSafeOpenPosition(x, y, viewportInfo = getViewportInfo()) {
     const maxCenterY = viewportInfo.offsetTop + viewportInfo.height - wingPadding;
 
     const clampedCenterX = clamp(
-        x + FAB_RADIUS_PX,
+        x + fabRadius,
         Math.min(minCenterX, maxCenterX),
         Math.max(minCenterX, maxCenterX)
     );
     const clampedCenterY = clamp(
-        y + FAB_RADIUS_PX,
+        y + fabRadius,
         Math.min(minCenterY, maxCenterY),
         Math.max(minCenterY, maxCenterY)
     );
 
     return clampToViewport(
-        clampedCenterX - FAB_RADIUS_PX,
-        clampedCenterY - FAB_RADIUS_PX
+        clampedCenterX - fabRadius,
+        clampedCenterY - fabRadius
     );
 }
 

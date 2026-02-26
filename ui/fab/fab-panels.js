@@ -64,7 +64,8 @@ function getPercentile(sortedValues, fraction) {
     return sortedValues[index];
 }
 
-export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
+export function createFabPanels({ anchorRect, panelMarkupById, mobileScalePercent = 100, onAction }) {
+    const mobileScaleFactor = mobileScalePercent / 100;
     const root = document.createElement('div');
     root.className = 'ss-fab-panels ss-fab-wheel-hidden';
     root.setAttribute('role', 'dialog');
@@ -264,12 +265,14 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
     }
 
     function positionWheelAnchors(center) {
+        const scale = isMobileViewport ? mobileScaleFactor : 1;
+        const scaledWheelRadius = WHEEL_RADIUS_PX * scale;
         PANEL_ORDER.forEach((panelId) => {
             const angle = degreesToRadians(PANEL_ANGLES_DEG[panelId] ?? 0);
             const angleDeg = PANEL_ANGLES_DEG[panelId] ?? 0;
             const anchor = {
-                x: center.x + Math.cos(angle) * WHEEL_RADIUS_PX,
-                y: center.y + Math.sin(angle) * WHEEL_RADIUS_PX,
+                x: center.x + Math.cos(angle) * scaledWheelRadius,
+                y: center.y + Math.sin(angle) * scaledWheelRadius,
                 angle,
             };
 
@@ -281,10 +284,7 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
                 button.style.setProperty('--ss-wheel-icon-rotation', `${-angleDeg}deg`);
             }
 
-            const buttonRect = wheelButtonSizeById.get(panelId) || {
-                width: DEFAULT_WHEEL_BUTTON_WIDTH_PX,
-                height: DEFAULT_WHEEL_BUTTON_HEIGHT_PX,
-            };
+            const buttonRect = wheelButtonSizeById.get(panelId) || getScaledWheelButtonFallback();
             wheelAnchors.set(panelId, {
                 ...anchor,
                 rect: {
@@ -396,19 +396,25 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
         wheelButtonSizeDirty = true;
     }
 
+    function getScaledWheelButtonFallback() {
+        const scale = isMobileViewport ? mobileScaleFactor : 1;
+        return {
+            width: DEFAULT_WHEEL_BUTTON_WIDTH_PX * scale,
+            height: DEFAULT_WHEEL_BUTTON_HEIGHT_PX * scale,
+        };
+    }
+
     function refreshWheelButtonSizeCache() {
         if (!wheelButtonSizeDirty) return;
         wheelButtonSizeDirty = false;
         wheelButtonSizeById.clear();
 
+        const fallback = getScaledWheelButtonFallback();
         PANEL_ORDER.forEach((panelId) => {
             const button = wheelButtons.get(panelId);
             const rect = button?.getBoundingClientRect?.();
             if (!rect?.width || !rect?.height) {
-                wheelButtonSizeById.set(panelId, {
-                    width: DEFAULT_WHEEL_BUTTON_WIDTH_PX,
-                    height: DEFAULT_WHEEL_BUTTON_HEIGHT_PX,
-                });
+                wheelButtonSizeById.set(panelId, { ...fallback });
                 return;
             }
             wheelButtonSizeById.set(panelId, {
@@ -450,6 +456,12 @@ export function createFabPanels({ anchorRect, panelMarkupById, onAction }) {
             currentAnchorRect = nextAnchorRect;
             syncMobileAndViewportState();
             scheduleLayout({ wheel: true, panel: true });
+        },
+        repositionSync(nextAnchorRect) {
+            currentAnchorRect = nextAnchorRect;
+            syncMobileAndViewportState();
+            cancelScheduledLayout();
+            runLayout({ wheel: true, panel: true });
         },
         containsTarget(target) {
             return root.contains(target);

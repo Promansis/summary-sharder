@@ -282,9 +282,14 @@ export const FAB_CSS = `
 
 @media (max-width: 768px) {
     .ss-fab-trigger {
-        width: 56px;
-        height: 56px;
-        font-size: 22px;
+        width: calc(56px * var(--ss-fab-mobile-scale, 1));
+        height: calc(56px * var(--ss-fab-mobile-scale, 1));
+        font-size: calc(22px * var(--ss-fab-mobile-scale, 1));
+    }
+
+    .ss-crystal-icon {
+        width: calc(28px * var(--ss-fab-mobile-scale, 1));
+        height: calc(28px * var(--ss-fab-mobile-scale, 1));
     }
 }
 `;

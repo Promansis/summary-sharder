@@ -407,13 +407,17 @@ export const FAB_PANELS_CSS = `
 
 @media (max-width: 768px) {
     .ss-fab-panels {
-        --ss-fab-wheel-width: 58px;
-        --ss-fab-wheel-height: 70px;
+        --ss-fab-wheel-width: calc(58px * var(--ss-fab-mobile-scale, 1));
+        --ss-fab-wheel-height: calc(70px * var(--ss-fab-mobile-scale, 1));
+        --ss-fab-radius: calc(28px * var(--ss-fab-mobile-scale, 1));
+        --ss-fab-arc-offset: calc(5px * var(--ss-fab-mobile-scale, 1));
+        --ss-fab-wheel-corner-radius: calc(12px * var(--ss-fab-mobile-scale, 1));
+        --ss-fab-wheel-icon-offset-x: calc(6px * var(--ss-fab-mobile-scale, 1));
     }
 
     .ss-fab-wheel-icon {
-        font-size: 18px;
-        transform: translateX(7px) rotate(var(--ss-wheel-icon-rotation, 0deg));
+        font-size: calc(18px * var(--ss-fab-mobile-scale, 1));
+        transform: translateX(calc(7px * var(--ss-fab-mobile-scale, 1))) rotate(var(--ss-wheel-icon-rotation, 0deg));
     }
 
     /* Only apply to non-sheet panels */
