@@ -1,6 +1,6 @@
 /**
  * API Configuration Modal
- * Tabbed interface for configuring API settings per feature (Summary, Sharder, Pre-Edit Events)
+ * Tabbed interface for configuring API settings per feature (Summary, Sharder, Pre-Edit Events, Chat Manager)
  */
 
 import { saveSettings } from '../../../core/settings.js';
@@ -13,7 +13,7 @@ import { createSegmentedToggle } from '../../common/index.js';
 /**
  * Render a single feature's API configuration tab
  * @param {Object} settings - Extension settings
- * @param {string} feature - Feature key ('summary', 'sharder', 'events')
+ * @param {string} feature - Feature key ('summary', 'sharder', 'events', 'chatManager')
  * @param {HTMLElement} container - Tab panel container
  */
 function renderFeatureTab(settings, feature, container) {
@@ -36,7 +36,8 @@ function renderFeatureTab(settings, feature, container) {
     const featureNames = {
         summary: 'Summary',
         sharder: 'Sharder',
-        events: 'Pre-Edit Events'
+        events: 'Pre-Edit Events',
+        chatManager: 'Chat Manager'
     };
     const featureName = featureNames[feature] || feature;
     const profileUnavailableTitle = 'Connection Manager extension is unavailable. Enable it in Extensions to use profile mode.';
@@ -402,12 +403,14 @@ export async function openApiConfigModal(settings) {
                 <button class="ss-tab-button active" data-tab="summary">Summary API</button>
                 <button class="ss-tab-button" data-tab="sharder">Sharder API</button>
                 <button class="ss-tab-button" data-tab="events">Events API</button>
+                <button class="ss-tab-button" data-tab="chat-manager">Chat Manager API</button>
             </div>
 
             <div class="ss-tab-content">
                 <div id="ss-api-tab-summary" class="ss-tab-panel active"></div>
                 <div id="ss-api-tab-sharder" class="ss-tab-panel"></div>
                 <div id="ss-api-tab-events" class="ss-tab-panel"></div>
+                <div id="ss-api-tab-chat-manager" class="ss-tab-panel"></div>
             </div>
         </div>
     `;
@@ -434,11 +437,13 @@ export async function openApiConfigModal(settings) {
         const summaryPanel = modalContainer.querySelector('#ss-api-tab-summary');
         const sharderPanel = modalContainer.querySelector('#ss-api-tab-sharder');
         const eventsPanel = modalContainer.querySelector('#ss-api-tab-events');
+        const chatManagerPanel = modalContainer.querySelector('#ss-api-tab-chat-manager');
 
         // Render initial tab content
         renderFeatureTab(settings, 'summary', summaryPanel);
         renderFeatureTab(settings, 'sharder', sharderPanel);
         renderFeatureTab(settings, 'events', eventsPanel);
+        renderFeatureTab(settings, 'chatManager', chatManagerPanel);
 
         // Tab switching
         modalContainer.querySelectorAll('.ss-tab-button').forEach(btn => {

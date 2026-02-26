@@ -215,6 +215,8 @@ export function getDefaultSettings() {
             position: 0,                    // extension_prompt_types position
             depth: 2,
             template: 'Recalled memories:\n{{text}}',
+            injectionMode: 'extension_prompt', // 'extension_prompt' | 'variable'
+            injectionVariableName: 'ss_rag_memory',
             // Scene Expansion
             sceneExpansion: true,
             maxSceneExpansionChunks: 10,
@@ -268,6 +270,8 @@ export function getDefaultSettings() {
             position: 0,
             depth: 2,
             template: 'Recalled memories:\n{{text}}',
+            injectionMode: 'extension_prompt', // 'extension_prompt' | 'variable'
+            injectionVariableName: 'ss_rag_memory',
             // Re-ranker
             reranker: {
                 enabled: false,

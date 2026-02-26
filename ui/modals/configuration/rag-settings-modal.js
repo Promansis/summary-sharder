@@ -346,16 +346,36 @@ function renderModalHtml(rag, isSharder) {
                             <p class="ss-rag-inline-hint ss-text-hint" id="ss-rag-hybrid-hint"></p>
                         </div>
                         <div class="ss-block">
-                            <label for="ss-rag-position">Injection Position</label>
-                            <select id="ss-rag-position" class="text_pole ss-rag-control">
-                                <option value="0" ${(rag.position ?? 0) === 0 ? 'selected' : ''}>Position 0</option>
-                                <option value="1" ${(rag.position ?? 0) === 1 ? 'selected' : ''}>Position 1</option>
-                                <option value="2" ${(rag.position ?? 0) === 2 ? 'selected' : ''}>Position 2</option>
+                            <label for="ss-rag-injection-mode">Injection Mode</label>
+                            <select id="ss-rag-injection-mode" class="text_pole ss-rag-control">
+                                <option value="extension_prompt" ${(rag.injectionMode ?? 'extension_prompt') === 'extension_prompt' ? 'selected' : ''}>Extension Prompt (Position / Depth)</option>
+                                <option value="variable" ${rag.injectionMode === 'variable' ? 'selected' : ''}>Variable ({{getvar::...}})</option>
                             </select>
                         </div>
+                    </div>
+
+                    <div id="ss-rag-ext-prompt-controls" class="${(rag.injectionMode ?? 'extension_prompt') !== 'extension_prompt' ? 'ss-hidden' : ''}">
+                        <div class="ss-rag-grid-two">
+                            <div class="ss-block">
+                                <label for="ss-rag-position">Injection Position</label>
+                                <select id="ss-rag-position" class="text_pole ss-rag-control">
+                                    <option value="0" ${(rag.position ?? 0) === 0 ? 'selected' : ''}>Position 0</option>
+                                    <option value="1" ${(rag.position ?? 0) === 1 ? 'selected' : ''}>Position 1</option>
+                                    <option value="2" ${(rag.position ?? 0) === 2 ? 'selected' : ''}>Position 2</option>
+                                </select>
+                            </div>
+                            <div class="ss-block">
+                                <label for="ss-rag-depth">Injection Depth</label>
+                                <input id="ss-rag-depth" class="text_pole ss-rag-control" type="number" min="0" value="${rag.depth ?? 2}" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="ss-rag-var-controls" class="${rag.injectionMode === 'variable' ? '' : 'ss-hidden'}">
                         <div class="ss-block">
-                            <label for="ss-rag-depth">Injection Depth</label>
-                            <input id="ss-rag-depth" class="text_pole ss-rag-control" type="number" min="0" value="${rag.depth ?? 2}" />
+                            <label for="ss-rag-var-name">Variable Name</label>
+                            <input id="ss-rag-var-name" class="text_pole ss-rag-control" type="text" value="${rag.injectionVariableName || 'ss_rag_memory'}" />
+                            <p class="ss-text-hint">Place <code>{{getvar::${rag.injectionVariableName || 'ss_rag_memory'}}}</code> anywhere in your character card, system prompt, or author's note to inject memories there.</p>
                         </div>
                     </div>
 
@@ -528,6 +548,12 @@ function updateHybridUi() {
     betaWrap?.classList.toggle('ss-hidden', !(scoringMethod === 'hybrid' && fusionMethod === 'weighted'));
 }
 
+function updateInjectionModeUi() {
+    const mode = document.getElementById('ss-rag-injection-mode')?.value || 'extension_prompt';
+    document.getElementById('ss-rag-ext-prompt-controls')?.classList.toggle('ss-hidden', mode !== 'extension_prompt');
+    document.getElementById('ss-rag-var-controls')?.classList.toggle('ss-hidden', mode !== 'variable');
+}
+
 function updateExpansionUi() {
     const sceneExpandEl = document.getElementById('ss-rag-scene-expand');
     if (!sceneExpandEl) return; // not present in standard mode
@@ -656,6 +682,8 @@ function readRagDraft(base, isSharder) {
     draft.position = toInt(document.getElementById('ss-rag-position')?.value, 0);
     draft.depth = Math.max(0, toInt(document.getElementById('ss-rag-depth')?.value, 2));
     draft.template = document.getElementById('ss-rag-template')?.value || 'Recalled memories:\n{{text}}';
+    draft.injectionMode = document.getElementById('ss-rag-injection-mode')?.value || 'extension_prompt';
+    draft.injectionVariableName = document.getElementById('ss-rag-var-name')?.value?.trim() || 'ss_rag_memory';
 
     return draft;
 }
@@ -838,6 +866,8 @@ export async function openRagSettingsModal(settings) {
         position: src.position ?? 0,
         depth: src.depth ?? 2,
         template: src.template || 'Recalled memories:\n{{text}}',
+        injectionMode: src.injectionMode || 'extension_prompt',
+        injectionVariableName: src.injectionVariableName || 'ss_rag_memory',
         reranker: {
             enabled: src.reranker?.enabled ?? false,
             mode: src.reranker?.mode || 'similharity',
@@ -1104,6 +1134,9 @@ export async function openRagSettingsModal(settings) {
         });
         document.getElementById('ss-rag-hybrid-fusion')?.addEventListener('change', () => {
             updateHybridUi();
+        });
+        document.getElementById('ss-rag-injection-mode')?.addEventListener('change', () => {
+            updateInjectionModeUi();
         });
 
         // Scene expansion toggle only exists in Sharder Mode

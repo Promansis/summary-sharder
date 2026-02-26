@@ -1,10 +1,9 @@
-/**
+﻿/**
  * Feature-specific API configuration resolver
- * Centralizes API settings management across Summary, Sharder, and Pre-Edit Events
+ * Centralizes API settings management across Summary, Sharder, Pre-Edit Events, and Chat Manager
  */
 
 import { getApiKeyForConfig, getConfigById } from './legacy-api-config.js';
-import { getActiveApiFeature } from '../../ui/common/active-mode-state.js';
 
 /**
  * Default generation parameters per feature
@@ -24,12 +23,6 @@ const DEFAULT_GENERATION_PARAMS = {
  * @throws {Error} If API is not configured for the feature
  */
 export async function getFeatureApiSettings(settings, feature) {
-    // ChatManager has no dedicated UI config — always delegate to the active mode's API
-    if (feature === 'chatManager') {
-        const fallbackFeature = getActiveApiFeature(settings);
-        return getFeatureApiSettings(settings, fallbackFeature);
-    }
-
     const featureConfig = settings.apiFeatures?.[feature];
     const defaults = DEFAULT_GENERATION_PARAMS[feature] || DEFAULT_GENERATION_PARAMS.summary;
 
@@ -100,13 +93,6 @@ export async function getFeatureApiSettings(settings, feature) {
             ...generationParams
         };
     }
-
-    // ChatManager has no dedicated UI config — use the active mode's API settings entirely
-    if (feature === 'chatManager') {
-        const fallbackFeature = getActiveApiFeature(settings);
-        return getFeatureApiSettings(settings, fallbackFeature);
-    }
-
     throw new Error(`${feature} API not configured`);
 }
 
@@ -247,3 +233,4 @@ function getLegacyApiDisplayString(settings, feature) {
 
     return 'Not Configured';
 }
+

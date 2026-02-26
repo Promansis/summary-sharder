@@ -5,7 +5,7 @@
 
 import { setExtensionPrompt } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
-import { getActiveCollectionId } from './collection-manager.js';
+import { getActiveCollectionId, getShardCollectionId } from './collection-manager.js';
 import { rerankDocuments } from './reranker-client.js';
 import { hybridQuery, listChunks, queryChunks } from './vector-client.js';
 import { keywordBoost, runClientHybridFusion, scoreAndRank } from './scoring.js';
@@ -378,23 +378,43 @@ function formatInjectionText(template, results) {
 }
 
 /**
- * Set extension prompt safely across environments.
- * @param {string} text
- * @param {number} position
- * @param {number} depth
+ * Clear the extension prompt slot unconditionally.
  */
-function setPrompt(text, position, depth) {
-    if (typeof setExtensionPrompt !== 'function') {
-        return;
+function clearExtensionPrompt() {
+    if (typeof setExtensionPrompt === 'function') {
+        setExtensionPrompt(EXTENSION_PROMPT_TAG_SS, '', 0, 0);
     }
-    setExtensionPrompt(EXTENSION_PROMPT_TAG_SS, text || '', Number(position) || 0, Number(depth) || 0);
 }
 
 /**
- * Clear Summary Sharder RAG prompt injection.
+ * Apply RAG injection using the configured mode.
+ * - 'extension_prompt': injects at a fixed position/depth via setExtensionPrompt
+ * - 'variable': sets a local chat variable so {{getvar::name}} resolves in prompt templates
+ * @param {string} text
+ * @param {Object} rag
  */
-export function clearRagPromptInjection() {
-    setPrompt('', 0, 0);
+function applyInjection(text, rag) {
+    const mode = rag?.injectionMode ?? 'extension_prompt';
+    if (mode === 'variable') {
+        clearExtensionPrompt();
+        const varName = rag?.injectionVariableName || 'ss_rag_memory';
+        globalThis.SillyTavern?.getContext()?.variables?.local?.set(varName, text || '');
+    } else {
+        if (typeof setExtensionPrompt !== 'function') return;
+        setExtensionPrompt(EXTENSION_PROMPT_TAG_SS, text || '', Number(rag?.position) || 0, Number(rag?.depth) || 0);
+    }
+}
+
+/**
+ * Clear Summary Sharder RAG prompt injection (both extension prompt and variable).
+ * @param {Object} [rag]
+ */
+export function clearRagPromptInjection(rag) {
+    clearExtensionPrompt();
+    if (rag?.injectionMode === 'variable') {
+        const varName = rag?.injectionVariableName || 'ss_rag_memory';
+        globalThis.SillyTavern?.getContext()?.variables?.local?.set(varName, '');
+    }
 }
 
 /**
@@ -412,7 +432,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         const isSharder = settings?.sharderMode === true;
 
         if (type === 'quiet' || !rag?.enabled) {
-            setPrompt('', 0, 0);
+            clearRagPromptInjection(rag);
             return chat;
         }
 
@@ -422,7 +442,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
 
         const queryText = buildQueryText(chat, rag.queryCount);
         if (!queryText) {
-            setPrompt('', rag.position, rag.depth);
+            clearRagPromptInjection(rag);
             return chat;
         }
 
@@ -473,7 +493,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         merged = isSharder ? orderWithSceneGrouping(merged) : merged;
 
         const injection = formatInjectionText(rag.template, merged);
-        setPrompt(injection, rag.position, rag.depth);
+        applyInjection(injection, rag);
 
         console.log(`${LOG_PREFIX} Retrieval complete`, {
             mode: isSharder ? 'sharder' : 'standard',
@@ -488,7 +508,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         });
     } catch (error) {
         console.warn(`${LOG_PREFIX} Retrieval failed:`, error?.message || error);
-        setPrompt('', 0, 0);
+        clearExtensionPrompt();
     }
 
     return chat;
