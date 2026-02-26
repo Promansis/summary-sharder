@@ -15,6 +15,17 @@ export const EXTENSION_PROMPT_TAG_SS = '5_summary_sharder_rag';
 
 const LOG_PREFIX = '[SummarySharder:RAG]';
 
+/** @type {Object|null} Last successful RAG injection snapshot. */
+let lastInjectionData = null;
+
+/**
+ * Returns the most recent RAG injection data, or null if none yet.
+ * @returns {Object|null}
+ */
+export function getLastInjectionData() {
+    return lastInjectionData;
+}
+
 /**
  * @param {string} text
  * @returns {string}
@@ -433,6 +444,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
 
         if (type === 'quiet' || !rag?.enabled) {
             clearRagPromptInjection(rag);
+            lastInjectionData = null;
             return chat;
         }
 
@@ -443,6 +455,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         const queryText = buildQueryText(chat, rag.queryCount);
         if (!queryText) {
             clearRagPromptInjection(rag);
+            lastInjectionData = null;
             return chat;
         }
 
@@ -494,6 +507,27 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
 
         const injection = formatInjectionText(rag.template, merged);
         applyInjection(injection, rag);
+
+        lastInjectionData = {
+            timestamp: Date.now(),
+            entries: merged.map(item => ({
+                text: item?.text || '',
+                score: item?.score ?? null,
+                metadata: item?.metadata || {},
+                hash: item?.hash || '',
+            })),
+            injectionMode: rag.injectionMode ?? 'extension_prompt',
+            position: rag.injectionMode === 'variable' ? null : (Number(rag.position) || 0),
+            depth: rag.injectionMode === 'variable' ? null : (Number(rag.depth) || 0),
+            variableName: rag.injectionMode === 'variable' ? (rag.injectionVariableName || 'ss_rag_memory') : null,
+            template: rag.template || 'Recalled memories:\n{{text}}',
+            injectionText: injection,
+            scoringMethod: rag.scoringMethod || 'keyword',
+            backend: rag.backend,
+            rerankerApplied: !!rerankMeta.metadata?.applied,
+            rerankerMode: rerankMeta.metadata?.mode || 'none',
+            mode: isSharder ? 'sharder' : 'standard',
+        };
 
         console.log(`${LOG_PREFIX} Retrieval complete`, {
             mode: isSharder ? 'sharder' : 'standard',

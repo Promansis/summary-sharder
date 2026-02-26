@@ -135,6 +135,7 @@ function renderModalHtml(rag, isSharder) {
                         <input id="ss-rag-purge-all" class="menu_button ss-rag-control" type="button" value="Purge All Vectors" />
                         <input id="ss-rag-open-browser" class="menu_button ss-rag-control" type="button" value="Browse Collections" />
                         <input id="ss-rag-open-debug" class="menu_button ss-rag-control" type="button" value="Debug RAG" />
+                        <input id="ss-rag-open-history" class="menu_button ss-rag-control" type="button" value="RAG History" />
                     </div>
                     <p id="ss-rag-embedding-test-status" class="ss-rag-inline-hint ss-text-hint">Embedding source test: not run</p>
                     <p id="ss-rag-reranker-test-status" class="ss-rag-inline-hint ss-text-hint">Re-ranker test: not run</p>
@@ -1393,6 +1394,11 @@ export async function openRagSettingsModal(settings) {
             const draft = readRagDraft(liveDraft, isSharder);
             await openRagDebugModal(draft);
             if (collectionId) await updateStats(readRagDraft(liveDraft, isSharder), collectionId);
+        });
+
+        document.getElementById('ss-rag-open-history')?.addEventListener('click', async () => {
+            const { openRagHistoryModal } = await import('../management/rag-history-modal.js');
+            await openRagHistoryModal();
         });
     });
 

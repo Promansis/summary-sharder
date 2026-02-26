@@ -202,7 +202,8 @@ function buildAdvancedPanel(snapshot) {
 
     if (snapshot.ragEnabled) {
         managementSection.items.push(
-            actionBtn('rag-debug', 'fa-bug', 'RAG Debug')
+            actionBtn('rag-debug', 'fa-bug', 'RAG Debug'),
+            actionBtn('rag-history', 'fa-clock-rotate-left', 'RAG History'),
         );
     }
 

@@ -577,6 +577,14 @@ jQuery(async () => {
                 toastr.error(`Could not open RAG debug: ${error?.message || error}`);
             }
         },
+        onOpenRagHistory: async () => {
+            try {
+                const { openRagHistoryModal } = await import('./ui/modals/management/rag-history-modal.js');
+                await openRagHistoryModal();
+            } catch (error) {
+                toastr.error(`Could not open RAG history: ${error?.message || error}`);
+            }
+        },
         getLastSummarizedIndex: () => lastSummarizedIndex,
     });
 
