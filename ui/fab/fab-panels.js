@@ -278,8 +278,8 @@ export function createFabPanels({ anchorRect, panelMarkupById, mobileScalePercen
 
             const button = wheelButtons.get(panelId);
             if (button) {
-                button.style.left = `${anchor.x}px`;
-                button.style.top = `${anchor.y}px`;
+                button.style.setProperty('left', `${anchor.x}px`, 'important');
+                button.style.setProperty('top', `${anchor.y}px`, 'important');
                 button.style.setProperty('--ss-wheel-rotation', `${angleDeg}deg`);
                 button.style.setProperty('--ss-wheel-icon-rotation', `${-angleDeg}deg`);
             }

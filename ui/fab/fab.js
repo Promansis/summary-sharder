@@ -767,10 +767,10 @@ function clampToViewport(x, y) {
 
 function setFabPosition(x, y) {
     if (!fabElement) return;
-    fabElement.style.left = `${x}px`;
-    fabElement.style.top = `${y}px`;
-    fabElement.style.right = 'auto';
-    fabElement.style.bottom = 'auto';
+    fabElement.style.setProperty('left', `${x}px`, 'important');
+    fabElement.style.setProperty('top', `${y}px`, 'important');
+    fabElement.style.setProperty('right', 'auto', 'important');
+    fabElement.style.setProperty('bottom', 'auto', 'important');
 }
 
 function getViewportInfo() {

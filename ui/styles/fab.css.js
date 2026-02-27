@@ -3,10 +3,17 @@ export const FAB_CSS = `
    FLOATING ACTION BUTTON (FAB) - Crystal Trigger
    ====================================================================== */
 .ss-fab {
-    position: fixed;
+    position: absolute !important;
     bottom: 80px;
     right: 20px;
-    z-index: 9999;
+    z-index: 2147483647 !important;
+}
+
+.ss-fab:not([style*="left"]):not([style*="top"]) {
+    bottom: 80px !important;
+    right: 20px !important;
+    left: auto !important;
+    top: auto !important;
 }
 
 .ss-fab-trigger {

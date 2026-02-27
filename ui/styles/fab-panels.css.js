@@ -19,9 +19,9 @@ export const FAB_PANELS_CSS = `
 }
 
 .ss-fab-panels {
-    position: fixed;
-    inset: 0;
-    z-index: 9998;
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 2147483646 !important;
     pointer-events: none;
     --ss-fab-wheel-width: 54px;
     --ss-fab-wheel-height: 65px;
@@ -39,19 +39,22 @@ export const FAB_PANELS_CSS = `
 }
 
 .ss-fab-wheel-btn {
-    position: fixed;
+    position: fixed !important;
     width: var(--ss-fab-wheel-width);
     height: var(--ss-fab-wheel-height);
     border: none;
     background: transparent;
     display: grid;
     place-items: center;
-    padding: 0;
-    transform: translate(-50%, -50%) rotate(var(--ss-wheel-rotation, 0deg)) scale(0);
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    box-sizing: border-box !important;
+    transform: translate(-50%, -50%) rotate(var(--ss-wheel-rotation, 0deg)) scale(0) !important;
     opacity: 0;
     pointer-events: none;
     cursor: pointer;
-    transition: transform 0.3s cubic-bezier(0.2, 0.88, 0.25, 1), opacity 0.2s ease;
+    transition: transform 0.3s cubic-bezier(0.2, 0.88, 0.25, 1), opacity 0.2s ease !important;
     transition-delay: calc(var(--ss-wheel-index, 0) * 60ms);
     isolation: isolate;
 }
@@ -74,14 +77,14 @@ export const FAB_PANELS_CSS = `
 
 .ss-fab-wheel-btn::before {
     inset: 0;
-    background: color-mix(in srgb, var(--ss-primary) 70%, black);
+    background: color-mix(in srgb, var(--ss-primary) 70%, black) !important;
     box-shadow: 0 3px 10px rgba(0, 0, 0, 0.34);
     transition: box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .ss-fab-wheel-btn::after {
     inset: var(--ss-fab-wheel-border-width);
-    background: color-mix(in srgb, var(--ss-bg-primary) 92%, transparent);
+    background: color-mix(in srgb, var(--ss-bg-primary) 92%, transparent) !important;
     --ss-fab-cut-radius: calc(var(--ss-fab-cut-radius-base) - var(--ss-fab-wheel-border-width));
     --ss-fab-cut-center-x: calc(var(--ss-fab-cut-center-x-base) + var(--ss-fab-wheel-border-width));
     transition: background 0.15s ease;
@@ -89,7 +92,7 @@ export const FAB_PANELS_CSS = `
 
 .ss-fab-wheel-icon {
     font-size: 16px;
-    color: var(--ss-text-primary);
+    color: var(--ss-text-primary) !important;
     z-index: 1;
     line-height: 1;
     pointer-events: none;
@@ -98,13 +101,13 @@ export const FAB_PANELS_CSS = `
 }
 
 .ss-fab-panels.ss-fab-wheel-visible .ss-fab-wheel-btn {
-    transform: translate(-50%, -50%) rotate(var(--ss-wheel-rotation, 0deg)) scale(1);
+    transform: translate(-50%, -50%) rotate(var(--ss-wheel-rotation, 0deg)) scale(1) !important;
     opacity: 1;
     pointer-events: auto;
 }
 
 .ss-fab-panels.ss-fab-wheel-hidden .ss-fab-wheel-btn {
-    transform: translate(-50%, -50%) rotate(var(--ss-wheel-rotation, 0deg)) scale(0);
+    transform: translate(-50%, -50%) rotate(var(--ss-wheel-rotation, 0deg)) scale(0) !important;
     opacity: 0;
     pointer-events: none;
     transition-duration: 0.2s;
@@ -113,22 +116,22 @@ export const FAB_PANELS_CSS = `
 
 .ss-fab-wheel-btn:hover::before,
 .ss-fab-wheel-btn:focus-visible::before {
-    background: color-mix(in srgb, var(--ss-primary) 82%, white 8%);
+    background: color-mix(in srgb, var(--ss-primary) 82%, white 8%) !important;
     box-shadow: 0 6px 14px rgba(0, 0, 0, 0.4);
 }
 
 .ss-fab-wheel-btn:hover::after,
 .ss-fab-wheel-btn:focus-visible::after {
-    background: color-mix(in srgb, var(--ss-bg-secondary) 88%, transparent);
+    background: color-mix(in srgb, var(--ss-bg-secondary) 88%, transparent) !important;
 }
 
 .ss-fab-wheel-btn.is-active::before {
-    background: color-mix(in srgb, var(--ss-primary) 90%, white 8%);
+    background: color-mix(in srgb, var(--ss-primary) 90%, white 8%) !important;
     box-shadow: 0 7px 16px rgba(0, 0, 0, 0.45);
 }
 
 .ss-fab-wheel-btn.is-active::after {
-    background: color-mix(in srgb, var(--ss-primary) 18%, var(--ss-bg-primary));
+    background: color-mix(in srgb, var(--ss-primary) 18%, var(--ss-bg-primary)) !important;
 }
 
 .ss-fab-wheel-btn:focus-visible {
@@ -235,7 +238,7 @@ export const FAB_PANELS_CSS = `
 
 /* Backdrop when sheet is active */
 .ss-fab-sheet-active {
-    z-index: 10000 !important;
+    z-index: 2147483646 !important;
     pointer-events: auto !important;
     background: rgba(0, 0, 0, 0.4);
     animation: ss-fab-backdrop-fade-in 0.3s ease-out;
@@ -338,7 +341,8 @@ export const FAB_PANELS_CSS = `
     border: 1px solid var(--ss-border);
     color: var(--ss-text-primary);
     cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease !important;
+    overflow: visible !important;
     text-align: left;
     font-size: 11px;
 }
