@@ -281,7 +281,15 @@ export const RAG_CSS = `
     padding: 6px 8px;
 }
 
-.ss-rag-browser-item summary,
+.ss-rag-browser-item summary {
+    cursor: pointer;
+    display: grid;
+    grid-template-columns: auto auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+    color: var(--ss-text-primary);
+}
+
 .ss-rag-browser-scene-group-row {
     cursor: pointer;
     display: grid;
@@ -358,6 +366,18 @@ export const RAG_CSS = `
 .ss-rag-browser-item-preview {
     color: var(--ss-text-secondary);
     overflow-wrap: anywhere;
+}
+
+.ss-rag-browser-item-actions {
+    display: flex;
+    gap: 6px;
+    justify-self: end;
+}
+
+.ss-rag-browser-item-actions .menu_button {
+    padding: 2px 8px;
+    font-size: 11px;
+    min-width: 0;
 }
 
 .ss-rag-browser-item-body {

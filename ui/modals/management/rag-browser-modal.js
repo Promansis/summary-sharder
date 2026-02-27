@@ -5,9 +5,12 @@
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../../../../popup.js';
 import { showSsConfirm } from '../../common/modal-base.js';
 import {
+    buildChunkHash,
+    deleteChunks,
     getActiveCollectionId,
     getCollectionStats,
     hybridQuery,
+    insertChunks,
     listChunks,
     purgeCollection,
     queryChunks,
@@ -202,6 +205,7 @@ function renderChunkItem(item) {
     const scoreText = Number.isFinite(score) ? score.toFixed(4) : 'n/a';
     const meta = item?.metadata || {};
     const text = String(item?.text || '');
+    const hash = item?.hash ?? '';
 
     return `
         <details class="ss-rag-browser-item">
@@ -209,6 +213,10 @@ function renderChunkItem(item) {
                 <span class="ss-rag-browser-item-index">#${Number(item?.index ?? 0)}</span>
                 <span class="ss-rag-browser-item-score">score=${scoreText}</span>
                 <span class="ss-rag-browser-item-preview">${escapeHtml(truncate(text, 140))}</span>
+                <span class="ss-rag-browser-item-actions">
+                    <button type="button" class="menu_button ss-rag-browser-action" data-action="edit" data-hash="${escapeHtml(String(hash))}">Edit</button>
+                    <button type="button" class="menu_button ss-rag-browser-action" data-action="delete" data-hash="${escapeHtml(String(hash))}">Delete</button>
+                </span>
             </summary>
             <div class="ss-rag-browser-item-body">
                 <pre class="ss-rag-browser-text">${escapeHtml(text)}</pre>
@@ -455,6 +463,104 @@ async function runQuery(state, dom) {
 }
 
 /**
+ * @param {string} initialText
+ * @returns {Promise<string|null>}
+ */
+function showEditChunkModal(initialText) {
+    let resolved = false;
+    return new Promise((resolve) => {
+        const modalHtml = `
+            <div class="ss-owned-popup-content ss-rag-edit-modal">
+                <h3>Edit Chunk</h3>
+                <p class="ss-hint ss-rag-inline-hint">Update the chunk text. This will overwrite the existing vector entry.</p>
+                <textarea id="ss-rag-edit-text" class="text_pole ss-rag-template" rows="10">${escapeHtml(initialText)}</textarea>
+                <div class="ss-rag-actions-row ss-rag-actions-row-tight">
+                    <button type="button" id="ss-rag-edit-save" class="menu_button">Save Changes</button>
+                </div>
+            </div>
+        `;
+
+        const popup = new Popup(modalHtml, POPUP_TYPE.TEXT, null, {
+            okButton: 'Cancel',
+            cancelButton: false,
+            wide: true,
+            large: true,
+        });
+
+        const showPromise = popup.show();
+
+        requestAnimationFrame(() => {
+            const textarea = document.getElementById('ss-rag-edit-text');
+            const saveBtn = document.getElementById('ss-rag-edit-save');
+            if (textarea) {
+                textarea.focus();
+                textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+            }
+            saveBtn?.addEventListener('click', () => {
+                if (resolved) return;
+                resolved = true;
+                const value = String(textarea?.value ?? '');
+                popup.complete(POPUP_RESULT.AFFIRMATIVE);
+                resolve(value);
+            });
+        });
+
+        showPromise.then(() => {
+            if (resolved) return;
+            resolved = true;
+            resolve(null);
+        }).catch(() => {
+            if (resolved) return;
+            resolved = true;
+            resolve(null);
+        });
+    });
+}
+
+/**
+ * @param {Object} item
+ * @param {string} newText
+ * @returns {{text: string, hash: string|number, index: number, metadata: Object}}
+ */
+function buildEditedChunk(item, newText) {
+    const normalized = String(newText || '').trim();
+    const metadata = (item?.metadata && typeof item.metadata === 'object') ? { ...item.metadata } : {};
+    const index = Number.isFinite(Number(item?.index))
+        ? Number(item.index)
+        : Number(metadata.messageIndex ?? 0);
+    const hash = item?.hash ?? buildChunkHash(`${index}|${normalized}`);
+
+    return {
+        text: normalized,
+        hash,
+        index,
+        metadata,
+    };
+}
+
+/**
+ * @param {Object} state
+ * @param {string|number} hash
+ * @returns {Object|null}
+ */
+function findChunkByHash(state, hash) {
+    const target = String(hash ?? '');
+    if (!target) return null;
+
+    const fromPage = (state.items || []).find(item => String(item?.hash ?? '') === target);
+    if (fromPage) return fromPage;
+
+    const groups = Array.isArray(state.sceneGroups) ? state.sceneGroups : [];
+    for (const group of groups) {
+        const items = Array.isArray(group?.items) ? group.items : [];
+        const found = items.find(item => String(item?.hash ?? '') === target);
+        if (found) return found;
+    }
+
+    return null;
+}
+
+/**
  * Open RAG collection browser modal.
  * @param {Object} settings
  */
@@ -527,6 +633,68 @@ export async function openRagBrowserModal(settings) {
                 toastr.error(`RAG browser refresh failed: ${error?.message || error}`);
             }
         };
+
+        const modalRoot = document.querySelector('.ss-rag-browser-modal');
+        modalRoot?.addEventListener('click', async (event) => {
+            const button = event.target instanceof Element
+                ? event.target.closest('.ss-rag-browser-action')
+                : null;
+            if (!button) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const action = String(button.getAttribute('data-action') || '').trim();
+            const hash = button.getAttribute('data-hash');
+            if (!hash) {
+                toastr.error('Chunk hash missing');
+                return;
+            }
+
+            const item = findChunkByHash(state, hash);
+            if (!item) {
+                toastr.error('Chunk not found in current view');
+                return;
+            }
+
+            if (action === 'delete') {
+                const preview = truncate(String(item?.text || ''), 120);
+                const confirm = await showSsConfirm(
+                    'Delete Chunk',
+                    `Delete this chunk?\n${preview}`
+                );
+                if (confirm !== POPUP_RESULT.AFFIRMATIVE) return;
+
+                await deleteChunks(state.collectionId, [hash], state.rag);
+                toastr.success('Chunk deleted');
+                await refreshEverything();
+                return;
+            }
+
+            if (action === 'edit') {
+                const updatedText = await showEditChunkModal(String(item?.text || ''));
+                if (updatedText === null) return;
+
+                const normalized = String(updatedText || '').trim();
+                if (!normalized) {
+                    toastr.warning('Chunk text cannot be empty');
+                    return;
+                }
+
+                if (normalized === String(item?.text || '').trim()) {
+                    toastr.info('No changes detected');
+                    return;
+                }
+
+                const updatedChunk = buildEditedChunk(item, normalized);
+
+                await deleteChunks(state.collectionId, [hash], state.rag);
+                await insertChunks(state.collectionId, [updatedChunk], state.rag);
+
+                toastr.success('Chunk updated');
+                await refreshEverything();
+            }
+        });
 
         dom.sceneGroups?.addEventListener('click', (event) => {
             const target = event.target instanceof Element ? event.target.closest('[data-scene-code]') : null;
