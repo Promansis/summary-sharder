@@ -104,17 +104,15 @@ export const RAG_CSS = `
     padding: 10px;
 }
 
-.ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content,
-.ss-rag-accordion[data-rag-section="vectorization"] .ss-accordion-content {
+.ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     align-items: start;
 }
 
-.ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content > .ss-rag-actions-row,
-.ss-rag-accordion[data-rag-section="vectorization"] .ss-accordion-content > .ss-rag-actions-row,
-.ss-rag-accordion[data-rag-section="vectorization"] .ss-accordion-content > .ss-rag-stats {
+.ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content > .ss-rag-subsection-title,
+.ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content > .ss-rag-vectorization-grid {
     grid-column: 1 / -1;
 }
 
@@ -134,6 +132,17 @@ export const RAG_CSS = `
     margin: 0 0 8px 0;
     font-size: 13px;
     color: var(--ss-text-primary);
+}
+
+.ss-rag-vectorization-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    align-items: start;
+}
+
+.ss-rag-vectorization-grid .ss-rag-stats {
+    grid-column: 1 / -1;
 }
 
 #ss-rag-reranker-config {
@@ -170,6 +179,48 @@ export const RAG_CSS = `
     min-width: 170px;
 }
 
+.ss-rag-actions-primary {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.ss-rag-actions-primary .menu_button {
+    width: 100%;
+    min-width: 0;
+}
+
+.ss-rag-actions-secondary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+    opacity: 0.85;
+}
+
+.ss-rag-actions-secondary .menu_button {
+    font-size: 12px;
+    min-width: 150px;
+}
+
+.ss-rag-btn-destructive {
+    border-color: color-mix(in srgb, var(--ss-error) 60%, var(--ss-border));
+    color: color-mix(in srgb, var(--ss-error) 70%, var(--ss-text-primary));
+}
+
+.ss-rag-btn-destructive:hover {
+    border-color: var(--ss-error);
+    color: var(--ss-error);
+}
+
+.ss-rag-sublabel {
+    display: block;
+    margin: -2px 0 4px 0;
+    font-size: 11px;
+    color: var(--ss-text-muted);
+}
+
 .ss-rag-template {
     min-height: 100px;
     resize: vertical;
@@ -183,6 +234,38 @@ export const RAG_CSS = `
 
 .ss-rag-inline-hint {
     margin: 4px 0 0 0;
+}
+
+.ss-rag-hybrid-weighted-hint {
+    margin-top: 6px;
+}
+
+.ss-rag-weighted-scale {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--ss-text-muted);
+    margin-bottom: 6px;
+}
+
+.ss-rag-weighted-label strong {
+    color: var(--ss-text-primary);
+    font-weight: 600;
+    margin-left: 4px;
+}
+
+#ss-rag-weighted-slider-wrap .ss-range-pair {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+#ss-rag-weighted-slider-wrap {
+    grid-column: 1 / -1;
+}
+
+#ss-rag-weighted-slider-wrap .ss-range-number,
+#ss-rag-weighted-slider-wrap .ss-range-unit {
+    display: none;
 }
 
 .ss-rag-vectorization-lorebook-options {
@@ -246,6 +329,22 @@ export const RAG_CSS = `
 
 .ss-rag-browser-modal {
     max-height: 80vh;
+}
+
+.ss-rag-browser-chat-selector-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.ss-rag-browser-chat-selector-row select {
+    flex: 1;
+    min-width: 0;
+}
+
+.ss-rag-browser-chat-selector-row .menu_button {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .ss-rag-browser-stats-grid {

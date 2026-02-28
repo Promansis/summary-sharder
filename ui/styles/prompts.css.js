@@ -514,6 +514,10 @@ export const PROMPTS_CSS = `
 }
 
 .ss-external-api-selection {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
     margin-left: 25px;
 }
 
@@ -531,7 +535,8 @@ export const PROMPTS_CSS = `
 }
 
 .ss-api-manage-apis-btn {
-    margin-top: 10px;
+    margin-top: 0;
+    align-self: center;
 }
 
 .ss-api-config-divider {
@@ -556,10 +561,15 @@ export const PROMPTS_CSS = `
 }
 
 .ss-api-secondary-setting-row {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
     margin-top: 15px;
 }
 
 .ss-api-option-column {
+    flex: 1;
+    min-width: 200px;
     max-width: 300px;
 }
 

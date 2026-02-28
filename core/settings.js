@@ -49,6 +49,7 @@ export function getDefaultSettings() {
         prompts: [],            // Array of { name, content }
         activePromptName: '',
         outputMode: 'system',   // 'system' or 'lorebook'
+        collectionAliases: {},  // { [chatId]: sourceChatId } for RAG aliasing
         queueDelay: 0,          // Delay in seconds between API calls in queue mode
         // summarizedRanges moved to per-chat metadata (chat_metadata.summary_sharder.summarizedRanges)
 
@@ -425,6 +426,12 @@ export function migrateSettings(settings) {
     // Ensure eventsPrompt field exists
     if (settings.eventsPrompt === undefined) {
         settings.eventsPrompt = '';
+        migrated = true;
+    }
+
+    // Ensure collectionAliases map exists for RAG collection linking
+    if (!settings.collectionAliases || typeof settings.collectionAliases !== 'object') {
+        settings.collectionAliases = {};
         migrated = true;
     }
 

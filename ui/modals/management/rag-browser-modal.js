@@ -3,18 +3,22 @@
  */
 
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../../../../popup.js';
+import { characters, getRequestHeaders, this_chid } from '../../../../../../../script.js';
 import { showSsConfirm } from '../../common/modal-base.js';
 import {
     buildChunkHash,
     deleteChunks,
     getActiveCollectionId,
+    getCollectionAlias,
     getCollectionStats,
     hybridQuery,
     insertChunks,
     listChunks,
     purgeCollection,
     queryChunks,
+    setCollectionAlias,
 } from '../../../core/rag/index.js';
+import { saveSettings } from '../../../core/settings.js';
 
 const LOG_PREFIX = '[SummarySharder:RAG]';
 const GROUP_SCAN_LIMIT = 1000;
@@ -50,6 +54,136 @@ function truncate(text, max = 180) {
     const value = String(text || '').trim();
     if (value.length <= max) return value;
     return `${value.slice(0, Math.max(0, max - 1))}...`;
+}
+
+/**
+ * @param {string} fileName
+ * @returns {string}
+ */
+function getChatDisplayName(fileName) {
+    const name = String(fileName || '');
+    return name.replace(/\.jsonl$/i, '');
+}
+
+/**
+ * @param {Object} state
+ * @param {string|null} chatId
+ * @returns {string}
+ */
+function getChatLabel(state, chatId) {
+    const resolvedId = String(chatId || '').trim();
+    if (!resolvedId) return 'current chat';
+    const entry = Array.isArray(state?.availableChats)
+        ? state.availableChats.find(chat => chat.chatId === resolvedId)
+        : null;
+    if (entry?.fileName) {
+        return getChatDisplayName(entry.fileName);
+    }
+    return resolvedId;
+}
+
+/**
+ * @param {Object} settings
+ * @param {Object} ragSettings
+ * @param {string|null} currentChatId
+ * @param {(progress: {index: number, total: number, chatId: string}) => void} [onProgress]
+ * @returns {Promise<Array<{chatId: string, fileName: string, chunkCount: number}>>}
+ */
+async function discoverChatsWithVectors(settings, ragSettings, currentChatId, onProgress) {
+    const character = characters?.[this_chid];
+    if (!character) {
+        console.warn(`${LOG_PREFIX} Character not found for chat discovery.`);
+        return [];
+    }
+
+    let chats = [];
+    try {
+        const response = await fetch('/api/characters/chats', {
+            method: 'POST',
+            body: JSON.stringify({ avatar_url: character.avatar }),
+            headers: getRequestHeaders(),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch chats');
+        }
+
+        const data = await response.json();
+        if (typeof data === 'object' && data?.error === true) {
+            throw new Error('Error fetching chats');
+        }
+
+        chats = Object.values(data);
+    } catch (error) {
+        console.warn(`${LOG_PREFIX} Chat discovery failed:`, error?.message || error);
+        return [];
+    }
+
+    const results = [];
+    for (let i = 0; i < chats.length; i++) {
+        const chat = chats[i];
+        const fileName = String(chat?.file_name || '').trim();
+        if (!fileName) continue;
+
+        const rawCandidates = [
+            chat?.chat_id,
+            chat?.chatId,
+            chat?.id,
+            chat?.file_name,
+        ]
+            .map(value => String(value || '').trim())
+            .filter(Boolean);
+
+        const candidatesSet = new Set();
+        for (const candidate of rawCandidates) {
+            candidatesSet.add(candidate);
+            if (/\.(jsonl|json)$/i.test(candidate)) {
+                candidatesSet.add(candidate.replace(/\.(jsonl|json)$/i, ''));
+            }
+        }
+
+        const baseChatId = getChatDisplayName(fileName);
+        const isCurrent = currentChatId && (currentChatId === baseChatId || currentChatId === fileName);
+        if (isCurrent && currentChatId) {
+            candidatesSet.add(String(currentChatId));
+        }
+
+        const candidates = Array.from(candidatesSet);
+        if (candidates.length === 0) continue;
+
+        if (typeof onProgress === 'function') {
+            onProgress({ index: i + 1, total: chats.length, chatId: baseChatId || fileName });
+        }
+
+        let selectedChatId = candidates[0];
+        let bestCount = 0;
+        for (const candidate of candidates) {
+            try {
+                const collectionId = getActiveCollectionId(candidate, settings);
+                const listRes = await listChunks(collectionId, ragSettings, { offset: 0, limit: 1 });
+                const count = Number(listRes?.total ?? listRes?.items?.length ?? 0) || 0;
+                if (count > bestCount) {
+                    bestCount = count;
+                    selectedChatId = candidate;
+                }
+            } catch (error) {
+                console.warn(`${LOG_PREFIX} Failed to read stats for chat ${candidate}:`, error?.message || error);
+            }
+        }
+
+        if (bestCount > 0) {
+            results.push({ chatId: selectedChatId, fileName, chunkCount: bestCount, isCurrent });
+        }
+    }
+
+    results.sort((a, b) => {
+        if (a.isCurrent && !b.isCurrent) return -1;
+        if (b.isCurrent && !a.isCurrent) return 1;
+        if (b.chunkCount !== a.chunkCount) return b.chunkCount - a.chunkCount;
+        return a.fileName.localeCompare(b.fileName);
+    });
+
+    return results;
 }
 
 /**
@@ -93,12 +227,25 @@ function renderModalHtml(state) {
             </p>
 
             <div class="ss-rag-section">
+                <h4>Chat Selection</h4>
+                <div class="ss-rag-browser-chat-selector-row">
+                    <select id="ss-rag-browser-chat-select" class="text_pole">
+                        <option value="">Scanning chats...</option>
+                    </select>
+                    <button id="ss-rag-browser-link-btn" class="menu_button" style="display:none">
+                        Link to Current Chat
+                    </button>
+                </div>
+                <p id="ss-rag-browser-chat-hint" class="ss-hint ss-rag-inline-hint"></p>
+            </div>
+
+            <div class="ss-rag-section">
                 <h4>Collections</h4>
                 <div class="ss-rag-browser-stats-grid">
                     <div class="ss-rag-browser-stat-card">
                         <div class="ss-rag-status-label">${collectionLabel}</div>
                         <div class="ss-rag-status-value" id="ss-rag-browser-shard-count">Loading...</div>
-                        <div class="ss-rag-inline-hint">${escapeHtml(state.collectionId)}</div>
+                        <div class="ss-rag-inline-hint" id="ss-rag-browser-collection-id">${escapeHtml(state.collectionId)}</div>
                         <input id="ss-rag-browser-purge-shards" class="menu_button" type="button" value="${purgeLabel}" />
                     </div>
                     ${sceneCodesCard}
@@ -274,6 +421,35 @@ function renderSceneGroups(container, groups, selectedSceneCode = '') {
             </div>
         `;
     }).join('');
+}
+
+/**
+ * @param {Object} state
+ * @param {Object} dom
+ */
+function updateChatHint(state, dom) {
+    if (!dom.chatHint) return;
+    if (!state.currentChatId) {
+        dom.chatHint.textContent = 'No active chat detected.';
+        return;
+    }
+
+    const alias = getCollectionAlias(state.currentChatId);
+    if (alias) {
+        const sourceLabel = getChatLabel(state, alias);
+        const currentLabel = getChatLabel(state, state.currentChatId);
+        dom.chatHint.textContent = `${currentLabel} is aliased to ${sourceLabel} for RAG retrieval.`;
+        return;
+    }
+
+    if (state.viewingChatId && state.viewingChatId !== state.currentChatId) {
+        const viewingLabel = getChatLabel(state, state.viewingChatId);
+        const currentLabel = getChatLabel(state, state.currentChatId);
+        dom.chatHint.textContent = `Viewing vectors from ${viewingLabel}. Link them to ${currentLabel} to reuse memories.`;
+        return;
+    }
+
+    dom.chatHint.textContent = 'Select another chat to browse or link its vectors.';
 }
 
 /**
@@ -518,6 +694,112 @@ function showEditChunkModal(initialText) {
 }
 
 /**
+ * @param {string} sourceLabel
+ * @param {string} targetLabel
+ * @returns {Promise<'copy'|'alias'|null>}
+ */
+function showLinkChoiceModal(sourceLabel, targetLabel) {
+    let resolved = false;
+    return new Promise((resolve) => {
+        const modalHtml = `
+            <div class="ss-owned-popup-content ss-rag-link-modal">
+                <h3>Link Vectors</h3>
+                <p class="ss-hint ss-rag-inline-hint">
+                    Link vectors from "${escapeHtml(sourceLabel)}" to "${escapeHtml(targetLabel)}"?
+                </p>
+                <p class="ss-hint ss-rag-inline-hint">Choose how to link:</p>
+                <div class="ss-rag-actions-row ss-rag-actions-row-tight">
+                    <button type="button" id="ss-rag-link-copy" class="menu_button">Copy Vectors</button>
+                    <button type="button" id="ss-rag-link-alias" class="menu_button">Alias Collection</button>
+                </div>
+            </div>
+        `;
+
+        const popup = new Popup(modalHtml, POPUP_TYPE.TEXT, null, {
+            okButton: 'Cancel',
+            cancelButton: false,
+            wide: true,
+        });
+
+        const showPromise = popup.show();
+
+        requestAnimationFrame(() => {
+            const copyBtn = document.getElementById('ss-rag-link-copy');
+            const aliasBtn = document.getElementById('ss-rag-link-alias');
+
+            copyBtn?.addEventListener('click', () => {
+                if (resolved) return;
+                resolved = true;
+                popup.complete(POPUP_RESULT.AFFIRMATIVE);
+                resolve('copy');
+            });
+
+            aliasBtn?.addEventListener('click', () => {
+                if (resolved) return;
+                resolved = true;
+                popup.complete(POPUP_RESULT.AFFIRMATIVE);
+                resolve('alias');
+            });
+        });
+
+        showPromise.then(() => {
+            if (resolved) return;
+            resolved = true;
+            resolve(null);
+        }).catch(() => {
+            if (resolved) return;
+            resolved = true;
+            resolve(null);
+        });
+    });
+}
+
+/**
+ * @param {string} sourceCollectionId
+ * @param {string} targetCollectionId
+ * @param {Object} ragSettings
+ * @param {(progress: {copied: number, total: number}) => void} [onProgress]
+ * @returns {Promise<{copied: number, total: number}>}
+ */
+async function copyCollectionChunks(sourceCollectionId, targetCollectionId, ragSettings, onProgress) {
+    let offset = 0;
+    const limit = 100;
+    let copied = 0;
+    let total = 0;
+
+    while (true) {
+        const { items, total: totalCount, hasMore } = await listChunks(sourceCollectionId, ragSettings, {
+            offset,
+            limit,
+        });
+
+        total = Number(totalCount || 0);
+        const safeItems = Array.isArray(items) ? items : [];
+        const batch = safeItems
+            .map(item => ({
+                hash: item?.hash,
+                text: String(item?.text || ''),
+                index: Number(item?.index ?? item?.metadata?.messageIndex ?? 0),
+                metadata: (item?.metadata && typeof item.metadata === 'object') ? { ...item.metadata } : {},
+            }))
+            .filter(item => item.text.length > 0);
+
+        if (batch.length > 0) {
+            await insertChunks(targetCollectionId, batch, ragSettings);
+            copied += batch.length;
+            if (typeof onProgress === 'function') {
+                onProgress({ copied, total });
+            }
+        }
+
+        if (!hasMore || safeItems.length === 0) break;
+        offset += safeItems.length;
+    }
+
+    return { copied, total };
+}
+
+/**
  * @param {Object} item
  * @param {string} newText
  * @returns {{text: string, hash: string|number, index: number, metadata: Object}}
@@ -567,19 +849,34 @@ function findChunkByHash(state, hash) {
 export async function openRagBrowserModal(settings) {
     const isSharder = settings?.sharderMode === true;
     const ragBlockKey = isSharder ? 'rag' : 'ragStandard';
+    const currentChatId = SillyTavern.getContext()?.chatId ?? null;
+    const settingsNoAlias = { ...settings, collectionAliases: {} };
+    const aliasChatId = currentChatId ? getCollectionAlias(currentChatId) : null;
+    const initialViewingChatId = aliasChatId || currentChatId;
 
     let collectionId;
     try {
-        collectionId = getActiveCollectionId(null, settings);
+        collectionId = getActiveCollectionId(initialViewingChatId, settingsNoAlias);
     } catch (error) {
         toastr.error(`Cannot open RAG browser: ${error?.message || error}`);
         return;
+    }
+
+    let currentCollectionId = null;
+    try {
+        currentCollectionId = getActiveCollectionId(currentChatId, settingsNoAlias);
+    } catch (error) {
+        console.warn(`${LOG_PREFIX} Failed to resolve current collection:`, error?.message || error);
     }
 
     const state = {
         rag: { ...(settings?.[ragBlockKey] || {}) },
         isSharder,
         collectionId,
+        currentChatId,
+        currentCollectionId,
+        viewingChatId: initialViewingChatId,
+        availableChats: [],
         selectedSceneCode: '',
         sceneGroups: [],
         offset: 0,
@@ -607,6 +904,10 @@ export async function openRagBrowserModal(settings) {
             shardCount: document.getElementById('ss-rag-browser-shard-count'),
             sceneCount: document.getElementById('ss-rag-browser-scene-count'),
             sceneHint: document.getElementById('ss-rag-browser-scene-hint'),
+            chatSelect: document.getElementById('ss-rag-browser-chat-select'),
+            chatHint: document.getElementById('ss-rag-browser-chat-hint'),
+            linkBtn: document.getElementById('ss-rag-browser-link-btn'),
+            collectionIdHint: document.getElementById('ss-rag-browser-collection-id'),
             pageInfo: document.getElementById('ss-rag-browser-page-info'),
             sceneMeta: document.getElementById('ss-rag-browser-scene-group-meta'),
             items: document.getElementById('ss-rag-browser-items'),
@@ -621,8 +922,23 @@ export async function openRagBrowserModal(settings) {
             purgeShardsBtn: document.getElementById('ss-rag-browser-purge-shards'),
         };
 
+        const updateCollectionHint = () => {
+            if (dom.collectionIdHint) {
+                dom.collectionIdHint.textContent = state.collectionId;
+            }
+        };
+
+        const updateLinkButton = () => {
+            if (!dom.linkBtn) return;
+            const shouldShow = !!(state.currentChatId && state.viewingChatId && state.viewingChatId !== state.currentChatId);
+            dom.linkBtn.style.display = shouldShow ? '' : 'none';
+        };
+
         const refreshEverything = async () => {
             try {
+                updateCollectionHint();
+                updateLinkButton();
+                updateChatHint(state, dom);
                 await refreshStats(state, dom);
                 await refreshPage(state, dom);
                 if (state.isSharder) {
@@ -751,9 +1067,118 @@ export async function openRagBrowserModal(settings) {
             await refreshEverything();
         });
 
+        dom.chatSelect?.addEventListener('change', async () => {
+            const selectedChatId = String(dom.chatSelect.value || '').trim();
+            if (!selectedChatId) return;
+            if (selectedChatId === state.viewingChatId) return;
+
+            state.viewingChatId = selectedChatId;
+            state.collectionId = getActiveCollectionId(selectedChatId, settingsNoAlias);
+            state.offset = 0;
+            state.selectedSceneCode = '';
+            await refreshEverything();
+        });
+
+        dom.linkBtn?.addEventListener('click', async () => {
+            if (!state.currentChatId || !state.viewingChatId) return;
+            if (state.viewingChatId === state.currentChatId) return;
+
+            const sourceLabel = getChatLabel(state, state.viewingChatId);
+            const targetLabel = getChatLabel(state, state.currentChatId);
+            const choice = await showLinkChoiceModal(sourceLabel, targetLabel);
+
+            if (!choice) return;
+
+            if (choice === 'alias') {
+                setCollectionAlias(state.currentChatId, state.viewingChatId);
+                saveSettings(settings);
+                toastr.success(`Linked ${sourceLabel} to ${targetLabel} via alias`);
+                updateChatHint(state, dom);
+                return;
+            }
+
+            if (!state.currentCollectionId) {
+                toastr.error('Current chat collection not available');
+                return;
+            }
+
+            dom.linkBtn.disabled = true;
+            try {
+                toastr.info(`Copying vectors from ${sourceLabel}...`);
+                const progress = await copyCollectionChunks(
+                    state.collectionId,
+                    state.currentCollectionId,
+                    state.rag,
+                    ({ copied, total }) => {
+                        if (total > 0) {
+                            toastr.info(`Copied ${copied}/${total} chunks...`);
+                        } else {
+                            toastr.info(`Copied ${copied} chunks...`);
+                        }
+                    }
+                );
+                toastr.success(`Copied ${progress.copied}/${progress.total || progress.copied} chunks to ${targetLabel}`);
+                await refreshEverything();
+            } catch (error) {
+                console.warn(`${LOG_PREFIX} Copy failed:`, error?.message || error);
+                toastr.error(`Copy failed: ${error?.message || error}`);
+            } finally {
+                dom.linkBtn.disabled = false;
+            }
+        });
+
+        if (dom.chatSelect) {
+            dom.chatSelect.innerHTML = '<option value="">Scanning chats...</option>';
+            dom.chatSelect.disabled = true;
+        }
+        if (dom.chatHint) {
+            dom.chatHint.textContent = 'Scanning chats for vectors...';
+        }
+
+        try {
+            const chats = await discoverChatsWithVectors(
+                settingsNoAlias,
+                state.rag,
+                state.currentChatId,
+                ({ index, total }) => {
+                    if (dom.chatHint) {
+                        dom.chatHint.textContent = `Scanning chats (${index}/${total})...`;
+                    }
+                }
+            );
+
+            state.availableChats = chats;
+
+            if (dom.chatSelect) {
+                if (chats.length === 0) {
+                    dom.chatSelect.innerHTML = '<option value="">No chats with vectors found</option>';
+                    dom.chatSelect.disabled = true;
+                } else {
+                    dom.chatSelect.innerHTML = chats.map(chat => `
+                        <option value="${escapeHtml(chat.chatId)}">
+                            ${escapeHtml(getChatDisplayName(chat.fileName))} (${chat.chunkCount} chunks)
+                        </option>
+                    `).join('');
+
+                    const preferredChatId = chats.find(chat => chat.isCurrent)?.chatId
+                        || chats.find(chat => chat.chatId === state.viewingChatId)?.chatId
+                        || chats[0].chatId;
+                    state.viewingChatId = preferredChatId;
+                    dom.chatSelect.value = preferredChatId;
+                    state.collectionId = getActiveCollectionId(preferredChatId, settingsNoAlias);
+                    dom.chatSelect.disabled = false;
+                }
+            }
+        } catch (error) {
+            console.warn(`${LOG_PREFIX} Failed to populate chat selector:`, error?.message || error);
+            if (dom.chatSelect) {
+                dom.chatSelect.innerHTML = '<option value="">Failed to load chats</option>';
+                dom.chatSelect.disabled = true;
+            }
+        }
+
         await refreshEverything();
     });
 
     await showPromise;
 }
-

@@ -73,13 +73,29 @@ export const RESPONSIVE_CSS = `
         grid-template-columns: 1fr;
     }
 
-    .ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content,
-    .ss-rag-accordion[data-rag-section="vectorization"] .ss-accordion-content {
+    .ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content {
         grid-template-columns: 1fr;
     }
 
     #ss-rag-reranker-config,
     #ss-rag-qdrant-config {
+        grid-template-columns: 1fr;
+    }
+
+    .ss-rag-actions-primary {
+        grid-template-columns: 1fr;
+    }
+
+    .ss-rag-actions-secondary {
+        flex-direction: column;
+    }
+
+    .ss-rag-actions-secondary .menu_button {
+        min-width: unset;
+        width: 100%;
+    }
+
+    .ss-rag-vectorization-grid {
         grid-template-columns: 1fr;
     }
 

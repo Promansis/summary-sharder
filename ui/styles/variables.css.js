@@ -316,6 +316,27 @@ export const VARIABLES_CSS = `
     line-height: 1 !important;
 }
 
+/* Info hint button */
+#summary-sharder-settings .ss-info-hint-btn,
+#summary-sharder-panel .ss-info-hint-btn,
+.ss-modal .ss-info-hint-btn,
+[class*="ss-"][class*="-modal"] .ss-info-hint-btn,
+.popup:has([class*="ss-"][class*="-modal"]) .ss-info-hint-btn,
+.ss-fab .ss-info-hint-btn,
+.ss-fab-panels .ss-info-hint-btn,
+.ss-fab-generating .ss-info-hint-btn {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    border: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    background-image: none !important;
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+    padding: 0 !important;
+}
+
 #summary-sharder-settings .ss-tag,
 #summary-sharder-panel .ss-tag,
 .ss-modal .ss-tag,

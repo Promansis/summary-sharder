@@ -7,7 +7,7 @@ import { saveSettings, getDefaultSettings } from '../../../core/settings.js';
 import { openRagBrowserModal } from '../management/rag-browser-modal.js';
 import { openRagDebugModal } from '../management/rag-debug-modal.js';
 import { LorebookDropdown } from '../../dropdowns/lorebook-dropdown.js';
-import { createSegmentedToggle, createRangeSliderPair } from '../../common/index.js';
+import { createSegmentedToggle, createRangeSliderPair, infoHintHtml, mountInfoHints } from '../../common/index.js';
 import { showSsConfirm } from '../../common/modal-base.js';
 import {
     checkPluginAvailability,
@@ -33,6 +33,63 @@ import {
 } from '../../../core/rag/index.js';
 
 const LOG_PREFIX = '[SummarySharder:RAG]';
+const HYBRID_WEIGHT_STEP = 0.05;
+const HYBRID_WEIGHT_DEFAULT_ALPHA = 0.4;
+const HYBRID_WEIGHT_DEFAULT_BETA = 0.6;
+
+/**
+ * @param {number} value
+ * @returns {number}
+ */
+function clamp01(value) {
+    if (!Number.isFinite(value)) return 0;
+    return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * @param {number} value
+ * @param {number} step
+ * @returns {number}
+ */
+function roundToStep(value, step) {
+    if (!Number.isFinite(value) || !Number.isFinite(step) || step <= 0) {
+        return clamp01(value);
+    }
+    const rounded = Math.round(value / step) * step;
+    return clamp01(Number(rounded.toFixed(getStepDecimals(step))));
+}
+
+/**
+ * @param {number} step
+ * @returns {number}
+ */
+function getStepDecimals(step) {
+    const parts = String(step).split('.');
+    return parts[1] ? parts[1].length : 0;
+}
+
+/**
+ * @param {number} value
+ * @returns {string}
+ */
+function formatWeight(value) {
+    return clamp01(Number(value)).toFixed(getStepDecimals(HYBRID_WEIGHT_STEP));
+}
+
+/**
+ * @param {number} alpha
+ * @param {number} beta
+ * @returns {{ alpha: number, beta: number }}
+ */
+function normalizeHybridWeights(alpha, beta) {
+    const safeAlpha = Number.isFinite(alpha) ? alpha : HYBRID_WEIGHT_DEFAULT_ALPHA;
+    const safeBeta = Number.isFinite(beta) ? beta : HYBRID_WEIGHT_DEFAULT_BETA;
+    const total = safeAlpha + safeBeta;
+    const normalizedAlpha = total > 0 ? (safeAlpha / total) : HYBRID_WEIGHT_DEFAULT_ALPHA;
+    const roundedAlpha = roundToStep(normalizedAlpha, HYBRID_WEIGHT_STEP);
+    const roundedBeta = roundToStep(1 - roundedAlpha, HYBRID_WEIGHT_STEP);
+    return { alpha: roundedAlpha, beta: roundedBeta };
+}
 
 /**
  * @param {number|string} v
@@ -63,7 +120,7 @@ function toFloat(v, fallback) {
  * @returns {string}
  */
 function buildRagAccordion(key, title, icon, content, defaultOpen = false) {
-    const openDisplay = (key === 'backend' || key === 'vectorization') ? 'grid' : 'block';
+    const openDisplay = key === 'backend' ? 'grid' : 'block';
     const expanded = defaultOpen ? ' expanded' : '';
     const hiddenClass = defaultOpen ? '' : ' ss-hidden';
     const ariaExpanded = defaultOpen ? 'true' : 'false';
@@ -95,6 +152,11 @@ function renderModalHtml(rag, isSharder) {
     const isQdrant = backend === 'qdrant';
     const isMilvus = backend === 'milvus';
     const qdrantUseCloud = rag.backendConfig?.qdrantUseCloud === true;
+    const rerankerEnabled = !!rag.reranker?.enabled;
+    const isHybridWeighted = rag.hybridFusionMethod === 'weighted';
+    const showWeightedSlider = rag.scoringMethod === 'hybrid' && isHybridWeighted && rerankerEnabled;
+    const showWeightedInputs = isHybridWeighted && !rerankerEnabled;
+    const normalizedWeights = normalizeHybridWeights(rag.hybridAlpha ?? HYBRID_WEIGHT_DEFAULT_ALPHA, rag.hybridBeta ?? HYBRID_WEIGHT_DEFAULT_BETA);
     const modeBadgeClass = isSharder ? 'ss-rag-mode-sharder' : 'ss-rag-mode-standard';
     const modeLabel = isSharder ? 'Sharder Mode' : 'Standard Mode';
 
@@ -124,18 +186,19 @@ function renderModalHtml(rag, isSharder) {
                     </div>
                 </div>
                 <div class="ss-rag-status-actions">
-                    <div class="ss-rag-actions-row">
-                        <input id="ss-rag-init-backend" class="menu_button ss-rag-control" type="button" value="Initialize Backend" />
+                    <div class="ss-rag-actions-primary">
                         <input id="ss-rag-refresh-health" class="menu_button" type="button" value="Refresh Health" />
                         <input id="ss-rag-test-embedding" class="menu_button ss-rag-control" type="button" value="Test Embedding Source" />
                         <input id="ss-rag-test-reranker" class="menu_button ss-rag-control" type="button" value="Test Re-ranker" />
+                        <input id="ss-rag-init-backend" class="menu_button ss-rag-control" type="button" value="Initialize Backend" />
                     </div>
-                    <div class="ss-rag-actions-row">
-                        <input id="ss-rag-vectorize-all" class="menu_button ss-rag-control" type="button" value="Vectorize All Shards Now" />
-                        <input id="ss-rag-purge-all" class="menu_button ss-rag-control" type="button" value="Purge All Vectors" />
+                    <div class="ss-rag-actions-secondary">
+                        <input id="ss-rag-vectorize-all" class="menu_button ss-rag-control" type="button" value="Vectorize All Shards" />
                         <input id="ss-rag-open-browser" class="menu_button ss-rag-control" type="button" value="Browse Collections" />
                         <input id="ss-rag-open-debug" class="menu_button ss-rag-control" type="button" value="Debug RAG" />
                         <input id="ss-rag-open-history" class="menu_button ss-rag-control" type="button" value="RAG History" />
+                        <input id="ss-rag-purge-all" class="menu_button ss-rag-control ss-rag-btn-destructive" type="button" value="Purge All Vectors" />
+                        <input id="ss-rag-reset-defaults" class="menu_button ss-rag-control" type="button" value="Reset to Defaults" />
                     </div>
                     <p id="ss-rag-embedding-test-status" class="ss-rag-inline-hint ss-text-hint">Embedding source test: not run</p>
                     <p id="ss-rag-reranker-test-status" class="ss-rag-inline-hint ss-text-hint">Re-ranker test: not run</p>
@@ -216,9 +279,8 @@ function renderModalHtml(rag, isSharder) {
                             <p id="ss-rag-api-url-hint" class="ss-rag-inline-hint ss-text-hint">Overrides the default URL for this source. Useful for OpenAI-compatible proxies or custom endpoints.</p>
                         </div>
                         <div class="ss-block">
-                            <label for="ss-rag-model">Embedding Model (optional)</label>
+                            <label for="ss-rag-model">Embedding Model (optional) ${infoHintHtml('ss-rag-embedding-model-hint', 'These values are sent to Similharity for embedding requests and should match your vectors extension provider setup.')}</label>
                             <input id="ss-rag-model" class="text_pole ss-rag-control" type="text" value="${rag.model || ''}" placeholder="text-embedding-3-large" />
-                            <p class="ss-rag-inline-hint ss-text-hint">These values are sent to Similharity for embedding requests and should match your vectors extension provider setup.</p>
                         </div>
                         <div class="ss-block">
                             <label for="ss-rag-embedding-key">Embedding API Key (secure storage)</label>
@@ -229,50 +291,43 @@ function renderModalHtml(rag, isSharder) {
                             <p id="ss-rag-embedding-key-status" class="ss-rag-inline-hint ss-text-hint">Checking secure key status...</p>
                         </div>
                     </div>
-
-                `)}
-
-                ${buildRagAccordion('vectorization', 'Vectorization', 'fa-cubes', `
-                    <div class="ss-block">
-                        <label class="checkbox_label">
-                            <input id="ss-rag-vectorize-shards" class="ss-rag-control" type="checkbox" ${rag.vectorizeShards ? 'checked' : ''} />
-                            <span>Vectorize Memory Shards</span>
-                        </label>
-                    </div>
-                    <div class="ss-block">
-                        <label class="checkbox_label">
-                            <input id="ss-rag-auto-vectorize-new" class="ss-rag-control" type="checkbox" ${rag.autoVectorizeNewSummaries ? 'checked' : ''} />
-                            <span>Auto-Vector New Summaries</span>
-                        </label>
-                    </div>
-                    <div class="ss-block">
-                        <p class="ss-rag-inline-hint ss-text-hint">Only extension-generated summaries/shards are indexed.</p>
-                    </div>
-                    ${isSharder ? `
-                    <div class="ss-block">
-                        <label for="ss-rag-chunking-mode">Shard Chunking Mode</label>
-                        <div id="ss-rag-chunking-mode-host"></div>
-                        <p class="ss-rag-inline-hint ss-text-hint">Section-aware mode splits shards into superseding, cumulative, and rolling chunks with replacement/merge pruning behavior.</p>
-                    </div>
-                    ` : `
-                    <div class="ss-block">
-                        <label for="ss-rag-prose-chunking-mode">Prose Chunking Mode</label>
-                        <div id="ss-rag-prose-chunking-mode-host"></div>
-                        <p class="ss-rag-inline-hint ss-text-hint">Paragraph splits on double newlines. Full Summary indexes the whole summary as one chunk.</p>
-                    </div>
-                    `}
-                    <div class="ss-block">
-                        <label class="checkbox_label">
-                            <input id="ss-rag-use-lorebooks-vectorization" class="ss-rag-control" type="checkbox" ${rag.useLorebooksForVectorization ? 'checked' : ''} />
-                            <span>Use Lorebook</span>
-                        </label>
-                        <div id="ss-rag-vectorization-lorebook-options" class="ss-rag-vectorization-lorebook-options ${rag.useLorebooksForVectorization ? '' : 'ss-hidden'}">
-                            <div id="ss-rag-vectorization-lorebook-dropdown"></div>
+                    <h5 class="ss-rag-subsection-title">Vectorization</h5>
+                    <div class="ss-rag-vectorization-grid">
+                        <div class="ss-block">
+                            <label class="checkbox_label">
+                                <input id="ss-rag-vectorize-shards" class="ss-rag-control" type="checkbox" ${rag.vectorizeShards ? 'checked' : ''} />
+                                <span>Vectorize Memory Shards ${infoHintHtml('ss-rag-vectorize-shards-hint', 'Only extension-generated summaries/shards are indexed.')}</span>
+                            </label>
                         </div>
-                        <p class="ss-rag-inline-hint ss-text-hint">Selected lorebooks are scanned for shard-style entries when bulk vectorizing.</p>
-                    </div>
+                        <div class="ss-block">
+                            <label class="checkbox_label">
+                                <input id="ss-rag-auto-vectorize-new" class="ss-rag-control" type="checkbox" ${rag.autoVectorizeNewSummaries ? 'checked' : ''} />
+                                <span>Auto-Vector New Summaries</span>
+                            </label>
+                        </div>
+                        ${isSharder ? `
+                        <div class="ss-block">
+                            <label for="ss-rag-chunking-mode">Shard Chunking Mode ${infoHintHtml('ss-rag-chunking-mode-hint', 'Section-aware mode splits shards into superseding, cumulative, and rolling chunks with replacement/merge pruning behavior.')}</label>
+                            <div id="ss-rag-chunking-mode-host"></div>
+                        </div>
+                        ` : `
+                        <div class="ss-block">
+                            <label for="ss-rag-prose-chunking-mode">Prose Chunking Mode ${infoHintHtml('ss-rag-prose-chunking-mode-hint', 'Paragraph splits on double newlines. Full Summary indexes the whole summary as one chunk.')}</label>
+                            <div id="ss-rag-prose-chunking-mode-host"></div>
+                        </div>
+                        `}
+                        <div class="ss-block">
+                            <label class="checkbox_label">
+                                <input id="ss-rag-use-lorebooks-vectorization" class="ss-rag-control" type="checkbox" ${rag.useLorebooksForVectorization ? 'checked' : ''} />
+                                <span>Use Lorebook ${infoHintHtml('ss-rag-vectorization-lorebooks-hint', 'Selected lorebooks are scanned for shard-style entries when bulk vectorizing.')}</span>
+                            </label>
+                            <div id="ss-rag-vectorization-lorebook-options" class="ss-rag-vectorization-lorebook-options ${rag.useLorebooksForVectorization ? '' : 'ss-hidden'}">
+                                <div id="ss-rag-vectorization-lorebook-dropdown"></div>
+                            </div>
+                        </div>
 
-                    <div class="ss-rag-stats" id="ss-rag-stats">Loading collection stats...</div>
+                        <div class="ss-rag-stats" id="ss-rag-stats">Loading collection stats...</div>
+                    </div>
                 `)}
 
                 ${buildRagAccordion('retrieval', 'Retrieval', 'fa-magnifying-glass', `
@@ -280,9 +335,8 @@ function renderModalHtml(rag, isSharder) {
                         <div class="ss-block">
                             <label class="checkbox_label">
                                 <input id="ss-rag-include-lorebook-shards" class="ss-rag-control" type="checkbox" ${rag.includeLorebooksInShardSelection ? 'checked' : ''} />
-                                <span>Include Lorebook Shards When Output Is System</span>
+                                <span>Scan Lorebooks for Shard Selection (System output only) ${infoHintHtml('ss-rag-lorebook-selection-hint', 'Overrides shard discovery gating so sharder shard pickers also scan selected lorebooks while output mode is set to system.')}</span>
                             </label>
-                            <p class="ss-rag-inline-hint ss-text-hint">Overrides shard discovery gating so sharder shard pickers also scan selected lorebooks while output mode is set to system.</p>
                         </div>
                     </div>
 
@@ -320,14 +374,17 @@ function renderModalHtml(rag, isSharder) {
                     <div class="ss-rag-grid-two">
                         <div class="ss-block">
                             <label for="ss-rag-insert-count">Insert Count</label>
+                            <span class="ss-rag-sublabel">Chunks injected per generation</span>
                             <input id="ss-rag-insert-count" class="text_pole ss-rag-control" type="number" min="1" value="${rag.insertCount ?? 5}" />
                         </div>
                         <div class="ss-block">
                             <label for="ss-rag-query-count">Query Count</label>
+                            <span class="ss-rag-sublabel">Recent messages used as the search query</span>
                             <input id="ss-rag-query-count" class="text_pole ss-rag-control" type="number" min="1" value="${rag.queryCount ?? 2}" />
                         </div>
                         <div class="ss-block">
                             <label for="ss-rag-protect-count">Protect Count</label>
+                            <span class="ss-rag-sublabel">Recent messages checked for duplicate content</span>
                             <input id="ss-rag-protect-count" class="text_pole ss-rag-control" type="number" min="0" value="${rag.protectCount ?? 5}" />
                         </div>
                         <div class="ss-block">
@@ -360,9 +417,9 @@ function renderModalHtml(rag, isSharder) {
                             <div class="ss-block">
                                 <label for="ss-rag-position">Injection Position</label>
                                 <select id="ss-rag-position" class="text_pole ss-rag-control">
-                                    <option value="0" ${(rag.position ?? 0) === 0 ? 'selected' : ''}>Position 0</option>
-                                    <option value="1" ${(rag.position ?? 0) === 1 ? 'selected' : ''}>Position 1</option>
-                                    <option value="2" ${(rag.position ?? 0) === 2 ? 'selected' : ''}>Position 2</option>
+                                    <option value="0" ${(rag.position ?? 0) === 0 ? 'selected' : ''}>After System Prompt (0)</option>
+                                    <option value="1" ${(rag.position ?? 0) === 1 ? 'selected' : ''}>In Chat at Depth (1)</option>
+                                    <option value="2" ${(rag.position ?? 0) === 2 ? 'selected' : ''}>Before System Prompt (2)</option>
                                 </select>
                             </div>
                             <div class="ss-block">
@@ -396,15 +453,24 @@ function renderModalHtml(rag, isSharder) {
                                 <label for="ss-rag-hybrid-rrf-k">RRF k</label>
                                 <input id="ss-rag-hybrid-rrf-k" class="text_pole ss-rag-control" type="number" min="1" max="500" value="${rag.hybridRrfK ?? 60}" />
                             </div>
-                            <div class="ss-block ${rag.hybridFusionMethod === 'weighted' ? '' : 'ss-hidden'}" id="ss-rag-weighted-alpha-wrap">
+                            <div class="ss-block ${showWeightedSlider ? '' : 'ss-hidden'}" id="ss-rag-weighted-slider-wrap">
+                                <label for="ss-rag-hybrid-weight">Vector vs BM25</label>
+                                <div class="ss-rag-weighted-scale">
+                                    <span class="ss-rag-weighted-label">Vector <strong id="ss-rag-hybrid-weight-vector">${formatWeight(normalizedWeights.alpha)}</strong></span>
+                                    <span class="ss-rag-weighted-label">BM25 <strong id="ss-rag-hybrid-weight-bm25">${formatWeight(normalizedWeights.beta)}</strong></span>
+                                </div>
+                                <div id="ss-rag-hybrid-weight-host"></div>
+                            </div>
+                            <div class="ss-block ${showWeightedInputs ? '' : 'ss-hidden'}" id="ss-rag-weighted-alpha-wrap">
                                 <label for="ss-rag-hybrid-alpha">Weighted Alpha (Vector)</label>
                                 <input id="ss-rag-hybrid-alpha" class="text_pole ss-rag-control" type="number" min="0" max="1" step="0.05" value="${rag.hybridAlpha ?? 0.4}" />
                             </div>
-                            <div class="ss-block ${rag.hybridFusionMethod === 'weighted' ? '' : 'ss-hidden'}" id="ss-rag-weighted-beta-wrap">
+                            <div class="ss-block ${showWeightedInputs ? '' : 'ss-hidden'}" id="ss-rag-weighted-beta-wrap">
                                 <label for="ss-rag-hybrid-beta">Weighted Beta (BM25)</label>
                                 <input id="ss-rag-hybrid-beta" class="text_pole ss-rag-control" type="number" min="0" max="1" step="0.05" value="${rag.hybridBeta ?? 0.6}" />
                             </div>
                         </div>
+                        <p id="ss-rag-hybrid-weighted-hint" class="ss-rag-inline-hint ss-text-hint ss-rag-hybrid-weighted-hint ${rag.scoringMethod === 'hybrid' && rag.hybridFusionMethod === 'weighted' ? '' : 'ss-hidden'}">Values are normalized as proportional weights (e.g., 2:3 = 0.4:0.6).</p>
                     </div>
 
                     <div class="ss-block">
@@ -537,16 +603,24 @@ function updateChunkingUi() {
 function updateHybridUi() {
     const scoringMethod = document.getElementById('ss-rag-scoring')?.value || 'keyword';
     const fusionMethod = document.getElementById('ss-rag-hybrid-fusion')?.value || 'rrf';
+    const rerankerEnabled = !!document.getElementById('ss-rag-reranker-enabled')?.checked;
 
     const hybridWrap = document.getElementById('ss-rag-hybrid-controls');
     const rrfWrap = document.getElementById('ss-rag-rrf-k-wrap');
+    const sliderWrap = document.getElementById('ss-rag-weighted-slider-wrap');
     const alphaWrap = document.getElementById('ss-rag-weighted-alpha-wrap');
     const betaWrap = document.getElementById('ss-rag-weighted-beta-wrap');
+    const weightedHint = document.getElementById('ss-rag-hybrid-weighted-hint');
+    const showWeightedSlider = scoringMethod === 'hybrid' && fusionMethod === 'weighted' && rerankerEnabled;
+    const showWeightedInputs = scoringMethod === 'hybrid' && fusionMethod === 'weighted' && !rerankerEnabled;
 
     hybridWrap?.classList.toggle('ss-hidden', scoringMethod !== 'hybrid');
     rrfWrap?.classList.toggle('ss-hidden', !(scoringMethod === 'hybrid' && fusionMethod !== 'weighted'));
-    alphaWrap?.classList.toggle('ss-hidden', !(scoringMethod === 'hybrid' && fusionMethod === 'weighted'));
-    betaWrap?.classList.toggle('ss-hidden', !(scoringMethod === 'hybrid' && fusionMethod === 'weighted'));
+    sliderWrap?.classList.toggle('ss-hidden', !showWeightedSlider);
+    alphaWrap?.classList.toggle('ss-hidden', !showWeightedInputs);
+    betaWrap?.classList.toggle('ss-hidden', !showWeightedInputs);
+    weightedHint?.classList.toggle('ss-hidden', !(scoringMethod === 'hybrid' && fusionMethod === 'weighted'));
+    syncWeightedSliderFromInputs();
 }
 
 function updateInjectionModeUi() {
@@ -592,6 +666,7 @@ function updateRerankerUi() {
     const urlLabel = document.getElementById('ss-rag-reranker-url-label');
     const urlHint = document.getElementById('ss-rag-reranker-url-hint');
     wrap?.classList.toggle('ss-hidden', !enabled);
+    updateHybridUi();
     if (urlLabel) {
         urlLabel.textContent = mode === 'direct' ? 'Re-ranker Endpoint URL (required)' : 'Re-ranker API URL';
     }
@@ -605,6 +680,60 @@ function updateRerankerUi() {
         urlHint.textContent = mode === 'direct'
             ? 'Direct mode calls this URL from the browser. Provide your base URL (e.g. https://api.example.com/v1) — /rerank is appended automatically.'
             : 'Upstream reranker URL passed to Similharity.';
+    }
+}
+
+function setRangePairValue(id, value) {
+    const input = document.getElementById(id);
+    const pair = input?.closest?.('.ss-range-pair');
+    if (pair && typeof pair.setValue === 'function') {
+        pair.setValue(value);
+        return;
+    }
+    if (input) {
+        input.value = value ?? '';
+    }
+    const numberInput = document.getElementById(`${id}-input`);
+    if (numberInput) {
+        numberInput.value = value ?? '';
+    }
+}
+
+function setHybridWeightLabels(alpha, beta) {
+    const vectorEl = document.getElementById('ss-rag-hybrid-weight-vector');
+    const bm25El = document.getElementById('ss-rag-hybrid-weight-bm25');
+    if (vectorEl) vectorEl.textContent = formatWeight(alpha);
+    if (bm25El) bm25El.textContent = formatWeight(beta);
+}
+
+function setHybridWeightInputs(alpha, beta) {
+    const alphaInput = document.getElementById('ss-rag-hybrid-alpha');
+    const betaInput = document.getElementById('ss-rag-hybrid-beta');
+    if (alphaInput) alphaInput.value = formatWeight(alpha);
+    if (betaInput) betaInput.value = formatWeight(beta);
+}
+
+function applyHybridSliderValue(alphaValue) {
+    const alpha = roundToStep(clamp01(alphaValue), HYBRID_WEIGHT_STEP);
+    const beta = roundToStep(1 - alpha, HYBRID_WEIGHT_STEP);
+    setHybridWeightLabels(alpha, beta);
+    setHybridWeightInputs(alpha, beta);
+}
+
+function syncWeightedSliderFromInputs() {
+    const alphaInput = document.getElementById('ss-rag-hybrid-alpha');
+    const betaInput = document.getElementById('ss-rag-hybrid-beta');
+    if (!alphaInput && !betaInput) return;
+
+    const rawAlpha = toFloat(alphaInput?.value, HYBRID_WEIGHT_DEFAULT_ALPHA);
+    const rawBeta = toFloat(betaInput?.value, HYBRID_WEIGHT_DEFAULT_BETA);
+    const normalized = normalizeHybridWeights(rawAlpha, rawBeta);
+    setRangePairValue('ss-rag-hybrid-weight', normalized.alpha);
+    setHybridWeightLabels(normalized.alpha, normalized.beta);
+    const sliderWrap = document.getElementById('ss-rag-weighted-slider-wrap');
+    const sliderVisible = sliderWrap && !sliderWrap.classList.contains('ss-hidden');
+    if (sliderVisible) {
+        setHybridWeightInputs(normalized.alpha, normalized.beta);
     }
 }
 
@@ -687,6 +816,81 @@ function readRagDraft(base, isSharder) {
     draft.injectionVariableName = document.getElementById('ss-rag-var-name')?.value?.trim() || 'ss_rag_memory';
 
     return draft;
+}
+
+/**
+ * @param {Object} draft
+ * @param {boolean} isSharder
+ */
+function updateDomFromDraft(draft, isSharder) {
+    const setValue = (id, value) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (typeof el.setValue === 'function') {
+            el.setValue(value);
+            return;
+        }
+        if ('value' in el) {
+            el.value = value ?? '';
+        }
+    };
+
+    const setChecked = (id, checked) => {
+        const el = document.getElementById(id);
+        if (el && 'checked' in el) {
+            el.checked = !!checked;
+        }
+    };
+
+    setChecked('ss-rag-enabled', draft.enabled);
+    setValue('ss-rag-backend', draft.backend || 'vectra');
+    setValue('ss-rag-source', draft.source || 'transformers');
+    setValue('ss-rag-embedding-mode', draft.embeddingMode || 'similharity');
+    setValue('ss-rag-api-url', draft.apiUrl || '');
+    setValue('ss-rag-model', draft.model || '');
+
+    setValue('ss-rag-qdrant-address', draft.backendConfig?.qdrantAddress || 'localhost:6333');
+    setChecked('ss-rag-qdrant-use-cloud', draft.backendConfig?.qdrantUseCloud === true);
+    setValue('ss-rag-qdrant-local-key', draft.backendConfig?.qdrantApiKey || '');
+    setValue('ss-rag-qdrant-cloud-key', draft.backendConfig?.qdrantApiKey || '');
+    setValue('ss-rag-qdrant-url', draft.backendConfig?.qdrantUrl || '');
+    setValue('ss-rag-milvus-address', draft.backendConfig?.milvusAddress || 'localhost:19530');
+    setValue('ss-rag-milvus-token', draft.backendConfig?.milvusToken || '');
+
+    setChecked('ss-rag-vectorize-shards', draft.vectorizeShards !== false);
+    setChecked('ss-rag-auto-vectorize-new', draft.autoVectorizeNewSummaries !== false);
+    setChecked('ss-rag-use-lorebooks-vectorization', draft.useLorebooksForVectorization === true);
+    setChecked('ss-rag-include-lorebook-shards', draft.includeLorebooksInShardSelection === true);
+
+    if (isSharder) {
+        setValue('ss-rag-chunking-mode', draft.chunkingMode || 'standard');
+        setChecked('ss-rag-scene-expand', draft.sceneExpansion !== false);
+        setRangePairValue('ss-rag-scene-max', draft.maxSceneExpansionChunks ?? 10);
+    } else {
+        setValue('ss-rag-prose-chunking-mode', draft.proseChunkingMode || 'paragraph');
+    }
+
+    setValue('ss-rag-scoring', draft.scoringMethod || 'keyword');
+    setValue('ss-rag-hybrid-fusion', draft.hybridFusionMethod || 'rrf');
+    setValue('ss-rag-hybrid-rrf-k', draft.hybridRrfK ?? 60);
+    setValue('ss-rag-hybrid-alpha', draft.hybridAlpha ?? 0.4);
+    setValue('ss-rag-hybrid-beta', draft.hybridBeta ?? 0.6);
+    syncWeightedSliderFromInputs();
+    setValue('ss-rag-hybrid-overfetch', draft.hybridOverfetchMultiplier ?? 4);
+    setValue('ss-rag-insert-count', draft.insertCount ?? 5);
+    setValue('ss-rag-query-count', draft.queryCount ?? 2);
+    setValue('ss-rag-protect-count', draft.protectCount ?? 5);
+    setRangePairValue('ss-rag-threshold', draft.scoreThreshold ?? 0.25);
+    setValue('ss-rag-position', draft.position ?? 0);
+    setValue('ss-rag-depth', draft.depth ?? 2);
+    setValue('ss-rag-template', draft.template || 'Recalled memories:\n{{text}}');
+    setValue('ss-rag-injection-mode', draft.injectionMode || 'extension_prompt');
+    setValue('ss-rag-var-name', draft.injectionVariableName || 'ss_rag_memory');
+
+    setChecked('ss-rag-reranker-enabled', draft.reranker?.enabled);
+    setValue('ss-rag-reranker-mode', draft.reranker?.mode || 'similharity');
+    setValue('ss-rag-reranker-url', draft.reranker?.apiUrl || '');
+    setValue('ss-rag-reranker-model', draft.reranker?.model || '');
 }
 
 /**
@@ -812,6 +1016,80 @@ async function runStatusChecks(ragDraft) {
         }
     }
 }
+
+/**
+ * @param {Object} src
+ * @param {boolean} isSharder
+ * @returns {Object}
+ */
+function buildRagDraftFromSource(src, isSharder) {
+    const source = src || {};
+
+    return {
+        enabled: source.enabled ?? false,
+        backend: source.backend || 'vectra',
+        source: source.source || 'transformers',
+        embeddingMode: source.embeddingMode || 'similharity',
+        apiUrl: source.apiUrl || '',
+        model: source.model || '',
+        embeddingSecretId: source.embeddingSecretId || null,
+        backendConfig: {
+            qdrantAddress: source.backendConfig?.qdrantAddress
+                || `${source.backendConfig?.qdrantHost || 'localhost'}:${source.backendConfig?.qdrantPort ?? 6333}`,
+            qdrantUseCloud: source.backendConfig?.qdrantUseCloud === true
+                || String(source.backendConfig?.qdrantUrl || '').trim().length > 0,
+            qdrantApiKey: source.backendConfig?.qdrantApiKey || '',
+            qdrantUrl: source.backendConfig?.qdrantUrl || '',
+            milvusAddress: source.backendConfig?.milvusAddress || 'localhost:19530',
+            milvusToken: source.backendConfig?.milvusToken || '',
+        },
+        vectorizeShards: source.vectorizeShards !== false,
+        autoVectorizeNewSummaries: source.autoVectorizeNewSummaries !== false,
+        useLorebooksForVectorization: source.useLorebooksForVectorization === true,
+        vectorizationLorebookNames: Array.isArray(source.vectorizationLorebookNames)
+            ? [...source.vectorizationLorebookNames]
+            : [],
+        includeLorebooksInShardSelection: source.includeLorebooksInShardSelection === true,
+        insertCount: source.insertCount ?? 5,
+        queryCount: source.queryCount ?? 2,
+        protectCount: source.protectCount ?? 5,
+        scoreThreshold: source.scoreThreshold ?? 0.25,
+        scoringMethod: source.scoringMethod || 'keyword',
+        hybridFusionMethod: source.hybridFusionMethod || 'rrf',
+        hybridRrfK: source.hybridRrfK ?? 60,
+        hybridAlpha: source.hybridAlpha ?? 0.4,
+        hybridBeta: source.hybridBeta ?? 0.6,
+        hybridOverfetchMultiplier: source.hybridOverfetchMultiplier ?? 4,
+        position: source.position ?? 0,
+        depth: source.depth ?? 2,
+        template: source.template || 'Recalled memories:\n{{text}}',
+        injectionMode: source.injectionMode || 'extension_prompt',
+        injectionVariableName: source.injectionVariableName || 'ss_rag_memory',
+        reranker: {
+            enabled: source.reranker?.enabled ?? false,
+            mode: source.reranker?.mode || 'similharity',
+            apiUrl: source.reranker?.apiUrl || '',
+            model: source.reranker?.model || '',
+            secretId: source.reranker?.secretId || null,
+        },
+        // Sharder-only fields
+        ...(isSharder ? {
+            chunkingStrategy: (() => {
+                const c = source.chunkingStrategy;
+                return (c === 'conversation_turns' || c === 'message_batch' || c === 'per_message') ? c : 'per_message';
+            })(),
+            batchSize: source.batchSize ?? 5,
+            chunkingMode: resolveShardChunkingMode(source),
+            sceneAwareChunking: source.sceneAwareChunking === true,
+            sectionAwareChunking: source.sectionAwareChunking === true,
+            sceneExpansion: source.sceneExpansion !== false,
+            maxSceneExpansionChunks: source.maxSceneExpansionChunks ?? 10,
+        } : {
+            // Standard-only fields
+            proseChunkingMode: source.proseChunkingMode || 'paragraph',
+        }),
+    };
+}
 /**
  * Open the RAG settings modal.
  * @param {Object} settings
@@ -829,70 +1107,7 @@ export async function openRagSettingsModal(settings) {
     const src = settings[ragBlockKey];
 
     // Build the working draft from the active block
-    const rag = {
-        enabled: src.enabled ?? false,
-        backend: src.backend || 'vectra',
-        source: src.source || 'transformers',
-        embeddingMode: src.embeddingMode || 'similharity',
-        apiUrl: src.apiUrl || '',
-        model: src.model || '',
-        embeddingSecretId: src.embeddingSecretId || null,
-        backendConfig: {
-            qdrantAddress: src.backendConfig?.qdrantAddress
-                || `${src.backendConfig?.qdrantHost || 'localhost'}:${src.backendConfig?.qdrantPort ?? 6333}`,
-            qdrantUseCloud: src.backendConfig?.qdrantUseCloud === true
-                || String(src.backendConfig?.qdrantUrl || '').trim().length > 0,
-            qdrantApiKey: src.backendConfig?.qdrantApiKey || '',
-            qdrantUrl: src.backendConfig?.qdrantUrl || '',
-            milvusAddress: src.backendConfig?.milvusAddress || 'localhost:19530',
-            milvusToken: src.backendConfig?.milvusToken || '',
-        },
-        vectorizeShards: src.vectorizeShards !== false,
-        autoVectorizeNewSummaries: src.autoVectorizeNewSummaries !== false,
-        useLorebooksForVectorization: src.useLorebooksForVectorization === true,
-        vectorizationLorebookNames: Array.isArray(src.vectorizationLorebookNames)
-            ? [...src.vectorizationLorebookNames]
-            : [],
-        includeLorebooksInShardSelection: src.includeLorebooksInShardSelection === true,
-        insertCount: src.insertCount ?? 5,
-        queryCount: src.queryCount ?? 2,
-        protectCount: src.protectCount ?? 5,
-        scoreThreshold: src.scoreThreshold ?? 0.25,
-        scoringMethod: src.scoringMethod || 'keyword',
-        hybridFusionMethod: src.hybridFusionMethod || 'rrf',
-        hybridRrfK: src.hybridRrfK ?? 60,
-        hybridAlpha: src.hybridAlpha ?? 0.4,
-        hybridBeta: src.hybridBeta ?? 0.6,
-        hybridOverfetchMultiplier: src.hybridOverfetchMultiplier ?? 4,
-        position: src.position ?? 0,
-        depth: src.depth ?? 2,
-        template: src.template || 'Recalled memories:\n{{text}}',
-        injectionMode: src.injectionMode || 'extension_prompt',
-        injectionVariableName: src.injectionVariableName || 'ss_rag_memory',
-        reranker: {
-            enabled: src.reranker?.enabled ?? false,
-            mode: src.reranker?.mode || 'similharity',
-            apiUrl: src.reranker?.apiUrl || '',
-            model: src.reranker?.model || '',
-            secretId: src.reranker?.secretId || null,
-        },
-        // Sharder-only fields
-        ...(isSharder ? {
-            chunkingStrategy: (() => {
-                const c = src.chunkingStrategy;
-                return (c === 'conversation_turns' || c === 'message_batch' || c === 'per_message') ? c : 'per_message';
-            })(),
-            batchSize: src.batchSize ?? 5,
-            chunkingMode: resolveShardChunkingMode(src),
-            sceneAwareChunking: src.sceneAwareChunking === true,
-            sectionAwareChunking: src.sectionAwareChunking === true,
-            sceneExpansion: src.sceneExpansion !== false,
-            maxSceneExpansionChunks: src.maxSceneExpansionChunks ?? 10,
-        } : {
-            // Standard-only fields
-            proseChunkingMode: src.proseChunkingMode || 'paragraph',
-        }),
-    };
+    const rag = buildRagDraftFromSource(src, isSharder);
 
     const buildSecretSettingsView = () => ({ ...settings, rag: settings[ragBlockKey] });
 
@@ -926,6 +1141,7 @@ export async function openRagSettingsModal(settings) {
 
     requestAnimationFrame(async () => {
         let vectorizationLorebookDropdown = null;
+        mountInfoHints(document.querySelector('.ss-rag-modal'));
 
         const syncDraftFromDom = () => {
             liveDraft = readRagDraft(liveDraft, isSharder);
@@ -957,6 +1173,68 @@ export async function openRagSettingsModal(settings) {
                     ? [...liveDraft.vectorizationLorebookNames]
                     : [],
             );
+        };
+
+        const resetToDefaults = async () => {
+            const confirm = await showSsConfirm(
+                'Reset to Defaults',
+                'Reset RAG settings to defaults for this mode? Connection settings will be preserved.'
+            );
+            if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+                return;
+            }
+
+            const defaultSource = defaults[ragBlockKey] || defaults.rag;
+            const defaultDraft = buildRagDraftFromSource(defaultSource, isSharder);
+            const preservedReranker = {
+                enabled: liveDraft.reranker?.enabled ?? false,
+                mode: liveDraft.reranker?.mode || 'similharity',
+                apiUrl: liveDraft.reranker?.apiUrl || '',
+                model: liveDraft.reranker?.model || '',
+                secretId: liveDraft.reranker?.secretId || null,
+            };
+
+            const resetDraft = {
+                ...defaultDraft,
+                backend: liveDraft.backend,
+                backendConfig: { ...(liveDraft.backendConfig || {}) },
+                source: liveDraft.source,
+                apiUrl: liveDraft.apiUrl,
+                model: liveDraft.model,
+                embeddingMode: liveDraft.embeddingMode,
+                embeddingSecretId: liveDraft.embeddingSecretId || null,
+                reranker: {
+                    ...(defaultDraft.reranker || {}),
+                    ...preservedReranker,
+                },
+            };
+
+            liveDraft = {
+                ...resetDraft,
+                vectorizationLorebookNames: Array.isArray(resetDraft.vectorizationLorebookNames)
+                    ? [...resetDraft.vectorizationLorebookNames]
+                    : [],
+                backendConfig: { ...(resetDraft.backendConfig || {}) },
+                reranker: { ...(resetDraft.reranker || {}) },
+            };
+
+            updateDomFromDraft(liveDraft, isSharder);
+            updateBackendConditionalUi();
+            updateMasterToggleUi();
+            updateQdrantCloudUi();
+            updateChunkingUi();
+            updateHybridUi();
+            updateExpansionUi();
+            updateEmbeddingModeUi();
+            updateRerankerUi();
+            updateInjectionModeUi();
+            updateVectorizationLorebookUi();
+
+            liveDraft = readRagDraft(liveDraft, isSharder);
+            await runStatusChecks(liveDraft);
+            if (collectionId) {
+                await updateStats(liveDraft, collectionId);
+            }
         };
 
         const mountSegmentedToggle = (hostId, controlId, options, value) => {
@@ -991,8 +1269,35 @@ export async function openRagSettingsModal(settings) {
             host.replaceChildren(pair);
         };
 
+        const mountHybridWeightSlider = (hostId, controlId, value) => {
+            const host = document.getElementById(hostId);
+            if (!host) {
+                return;
+            }
+
+            const pair = createRangeSliderPair({
+                id: controlId,
+                min: 0,
+                max: 1,
+                step: HYBRID_WEIGHT_STEP,
+                value,
+                className: 'ss-rag-control',
+            });
+
+            const sync = () => {
+                applyHybridSliderValue(pair.value);
+            };
+            pair.addEventListener('input', sync);
+            pair.addEventListener('change', sync);
+
+            host.replaceChildren(pair);
+            syncWeightedSliderFromInputs();
+        };
+
         mountRangePair('ss-rag-threshold-host', 'ss-rag-threshold', 0, 1, 0.01, rag.scoreThreshold ?? 0.25);
         mountRangePair('ss-rag-scene-max-host', 'ss-rag-scene-max', 1, 25, 1, rag.maxSceneExpansionChunks ?? 10);
+        const normalizedWeights = normalizeHybridWeights(rag.hybridAlpha ?? HYBRID_WEIGHT_DEFAULT_ALPHA, rag.hybridBeta ?? HYBRID_WEIGHT_DEFAULT_BETA);
+        mountHybridWeightSlider('ss-rag-hybrid-weight-host', 'ss-rag-hybrid-weight', normalizedWeights.alpha);
 
         mountSegmentedToggle(
             'ss-rag-embedding-mode-host',
@@ -1399,6 +1704,10 @@ export async function openRagSettingsModal(settings) {
         document.getElementById('ss-rag-open-history')?.addEventListener('click', async () => {
             const { openRagHistoryModal } = await import('../management/rag-history-modal.js');
             await openRagHistoryModal();
+        });
+
+        document.getElementById('ss-rag-reset-defaults')?.addEventListener('click', async () => {
+            await resetToDefaults();
         });
     });
 

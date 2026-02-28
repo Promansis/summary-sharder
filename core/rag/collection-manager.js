@@ -12,6 +12,17 @@ const SHARD_PREFIX = 'ss_shards_';
 const STANDARD_PREFIX = 'ss_standard_';
 
 /**
+ * Normalize chat IDs to avoid extension-based collection splits.
+ * @param {string} chatId
+ * @returns {string}
+ */
+function normalizeChatId(chatId) {
+    const raw = String(chatId || '').trim();
+    if (!raw) return '';
+    return raw.replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
+}
+
+/**
  * Produce backend-safe collection key from a chat ID.
  * Qdrant path-based APIs can break on reserved URL characters like '#',
  * so we sanitize aggressively and append a stable hash to avoid collisions.
@@ -19,7 +30,7 @@ const STANDARD_PREFIX = 'ss_standard_';
  * @returns {string}
  */
 function toSafeCollectionKey(chatId) {
-    const raw = String(chatId || '').trim();
+    const raw = normalizeChatId(chatId);
 
     let hash = 2166136261; // FNV-1a 32-bit offset basis
     for (let i = 0; i < raw.length; i++) {
@@ -45,6 +56,41 @@ function toSafeCollectionKey(chatId) {
  */
 function getCurrentChatId() {
     return SillyTavern.getContext()?.chatId ?? null;
+}
+
+/**
+ * Get the alias source chat ID for a chat (if any).
+ * @param {string} [chatId] - Chat ID (defaults to current chat)
+ * @returns {string|null}
+ */
+export function getCollectionAlias(chatId) {
+    const id = normalizeChatId(chatId || getCurrentChatId());
+    if (!id) return null;
+    const aliases = extension_settings?.summary_sharder?.collectionAliases;
+    const alias = aliases && typeof aliases === 'object' ? aliases[id] : null;
+    return alias ? String(alias) : null;
+}
+
+/**
+ * Set or clear an alias for a chat's collection.
+ * @param {string} [chatId] - Chat ID (defaults to current chat)
+ * @param {string|null} sourceChatId - Source chat ID to alias to, or null to clear
+ */
+export function setCollectionAlias(chatId, sourceChatId) {
+    const id = normalizeChatId(chatId || getCurrentChatId());
+    if (!id) return;
+
+    const ss = extension_settings.summary_sharder;
+    if (!ss.collectionAliases || typeof ss.collectionAliases !== 'object') {
+        ss.collectionAliases = {};
+    }
+
+    if (!sourceChatId) {
+        delete ss.collectionAliases[id];
+        return;
+    }
+
+    ss.collectionAliases[id] = normalizeChatId(sourceChatId);
 }
 
 /**
@@ -81,9 +127,13 @@ export function getStandardCollectionId(chatId) {
  * @returns {string}
  */
 export function getActiveCollectionId(chatId, settings) {
+    const resolvedChatId = normalizeChatId(chatId || getCurrentChatId());
+    const alias = settings?.collectionAliases?.[resolvedChatId];
+    const targetChatId = normalizeChatId(alias ? String(alias) : resolvedChatId);
+
     return (settings?.sharderMode === true)
-        ? getShardCollectionId(chatId)
-        : getStandardCollectionId(chatId);
+        ? getShardCollectionId(targetChatId)
+        : getStandardCollectionId(targetChatId);
 }
 
 /**
