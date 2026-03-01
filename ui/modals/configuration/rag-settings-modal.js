@@ -713,9 +713,9 @@ function setHybridWeightInputs(alpha, beta) {
     if (betaInput) betaInput.value = formatWeight(beta);
 }
 
-function applyHybridSliderValue(alphaValue) {
-    const alpha = roundToStep(clamp01(alphaValue), HYBRID_WEIGHT_STEP);
-    const beta = roundToStep(1 - alpha, HYBRID_WEIGHT_STEP);
+function applyHybridSliderValue(betaValue) {
+    const beta = roundToStep(clamp01(betaValue), HYBRID_WEIGHT_STEP);
+    const alpha = roundToStep(1 - beta, HYBRID_WEIGHT_STEP);
     setHybridWeightLabels(alpha, beta);
     setHybridWeightInputs(alpha, beta);
 }
@@ -728,7 +728,7 @@ function syncWeightedSliderFromInputs() {
     const rawAlpha = toFloat(alphaInput?.value, HYBRID_WEIGHT_DEFAULT_ALPHA);
     const rawBeta = toFloat(betaInput?.value, HYBRID_WEIGHT_DEFAULT_BETA);
     const normalized = normalizeHybridWeights(rawAlpha, rawBeta);
-    setRangePairValue('ss-rag-hybrid-weight', normalized.alpha);
+    setRangePairValue('ss-rag-hybrid-weight', normalized.beta);
     setHybridWeightLabels(normalized.alpha, normalized.beta);
     const sliderWrap = document.getElementById('ss-rag-weighted-slider-wrap');
     const sliderVisible = sliderWrap && !sliderWrap.classList.contains('ss-hidden');
@@ -1297,7 +1297,7 @@ export async function openRagSettingsModal(settings) {
         mountRangePair('ss-rag-threshold-host', 'ss-rag-threshold', 0, 1, 0.01, rag.scoreThreshold ?? 0.25);
         mountRangePair('ss-rag-scene-max-host', 'ss-rag-scene-max', 1, 25, 1, rag.maxSceneExpansionChunks ?? 10);
         const normalizedWeights = normalizeHybridWeights(rag.hybridAlpha ?? HYBRID_WEIGHT_DEFAULT_ALPHA, rag.hybridBeta ?? HYBRID_WEIGHT_DEFAULT_BETA);
-        mountHybridWeightSlider('ss-rag-hybrid-weight-host', 'ss-rag-hybrid-weight', normalizedWeights.alpha);
+        mountHybridWeightSlider('ss-rag-hybrid-weight-host', 'ss-rag-hybrid-weight', normalizedWeights.beta);
 
         mountSegmentedToggle(
             'ss-rag-embedding-mode-host',
