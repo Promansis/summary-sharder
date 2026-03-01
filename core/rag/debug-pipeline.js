@@ -574,6 +574,29 @@ async function runStage(stages, stageName, input, fn, metadata = {}) {
 }
 
 /**
+ * Explicitly fetch the latest superseding chunk from the collection.
+ * Used as a fallback to ensure "Current State" is always present.
+ * @param {string} collectionId
+ * @param {Object} rag
+ * @returns {Promise<Object|null>}
+ */
+async function fetchLatestSuperseding(collectionId, rag) {
+    try {
+        const { items } = await listChunks(collectionId, rag, {
+            limit: 20,
+            metadataFilter: { chunkBehavior: 'superseding' },
+        });
+        if (!Array.isArray(items) || items.length === 0) return null;
+
+        items.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
+        return items[0];
+    } catch (error) {
+        console.warn('[SummarySharder:RAG] Debug fallback superseding fetch failed:', error?.message || error);
+        return null;
+    }
+}
+
+/**
  * Full retrieval simulation without prompt injection.
  * @param {Object} overrides
  * @returns {Promise<Object>}
@@ -581,6 +604,7 @@ async function runStage(stages, stageName, input, fn, metadata = {}) {
 export async function runDebugPipeline(overrides = {}) {
     const settings = extension_settings?.summary_sharder || {};
     const ragBase = settings?.rag || {};
+    const isSharder = settings?.sharderMode === true;
     const context = SillyTavern.getContext?.() || {};
     const chat = Array.isArray(overrides.chat) ? overrides.chat : (Array.isArray(context.chat) ? context.chat : []);
 
@@ -703,6 +727,20 @@ export async function runDebugPipeline(overrides = {}) {
         };
     }, baseMeta);
 
+    working = await runStage(stages, 'supersedingFallback', working, async (input) => {
+        if (!isSharder || input.some(item => item?.metadata?.chunkBehavior === 'superseding')) {
+            return { results: input, metadata: { skipped: true } };
+        }
+        const latest = await fetchLatestSuperseding(shardCollectionId, rag);
+        if (!latest) return { results: input, metadata: { found: false } };
+
+        const results = [...input, latest];
+        return {
+            results: dedupeResultsWithMeta(results).items,
+            metadata: { found: true },
+        };
+    }, baseMeta);
+
     working = await runStage(stages, 'contextDedup', working, async (input) => {
         const deduped = dedupeAgainstRecentContextWithMeta(input, chat, rag.protectCount);
         return {
@@ -773,11 +811,19 @@ export async function runDebugPipeline(overrides = {}) {
         const sorted = rag?.reranker?.enabled
             ? [...input]
             : [...input].sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
+
+        // Always prioritize the latest superseding chunk to ensure it's not sliced out by the reranker/limit.
+        const superseding = sorted.filter(item => item?.metadata?.chunkBehavior === 'superseding');
+        const others = sorted.filter(item => item?.metadata?.chunkBehavior !== 'superseding');
+        const insertCount = Math.max(1, Number(rag.insertCount) || 5);
+        const sliced = [...superseding, ...others].slice(0, insertCount);
+
         return {
-            results: sorted.slice(0, Math.max(1, Number(rag.insertCount) || 5)),
+            results: sliced,
             metadata: {
-                insertCount: Math.max(1, Number(rag.insertCount) || 5),
+                insertCount,
                 sortedBy: rag?.reranker?.enabled ? 'reranker' : 'score',
+                prioritizedSuperseding: superseding.length,
             },
         };
     }, baseMeta);

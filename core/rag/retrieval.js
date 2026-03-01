@@ -127,6 +127,29 @@ function dedupeResults(results) {
 }
 
 /**
+ * Explicitly fetch the latest superseding chunk from the collection.
+ * Used as a fallback to ensure "Current State" is always present.
+ * @param {string} collectionId
+ * @param {Object} rag
+ * @returns {Promise<Object|null>}
+ */
+async function fetchLatestSuperseding(collectionId, rag) {
+    try {
+        const { items } = await listChunks(collectionId, rag, {
+            limit: 20,
+            metadataFilter: { chunkBehavior: 'superseding' },
+        });
+        if (!Array.isArray(items) || items.length === 0) return null;
+
+        items.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
+        return items[0];
+    } catch (error) {
+        console.warn(`${LOG_PREFIX} Fallback superseding fetch failed:`, error?.message || error);
+        return null;
+    }
+}
+
+/**
  * @param {Array<Object>} results
  * @param {Array<Object>} chat
  * @param {number} protectCount
@@ -491,6 +514,17 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         const sceneExpanded = isSharder ? await expandByScene(settings, shardResults) : [];
 
         merged = dedupeResults([...merged, ...sceneExpanded]);
+
+        // Fallback: If no superseding chunk was found by the initial query, fetch the latest one explicitly.
+        // This ensures the "Current State" summary is always available if it exists in the collection.
+        if (isSharder && !merged.some(item => item?.metadata?.chunkBehavior === 'superseding')) {
+            const latest = await fetchLatestSuperseding(collectionId, rag);
+            if (latest) {
+                merged.push(latest);
+                merged = dedupeResults(merged);
+            }
+        }
+
         merged = dedupeAgainstRecentContext(merged, chat, rag.protectCount);
         merged = applyImportanceBoost(merged);
 
@@ -500,7 +534,12 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         if (!rerankMeta.metadata?.applied) {
             merged.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
         }
-        merged = merged.slice(0, Math.max(1, Number(rag.insertCount) || 5));
+
+        // Always prioritize the latest superseding chunk to ensure it's not sliced out by the reranker/limit.
+        const superseding = merged.filter(item => item?.metadata?.chunkBehavior === 'superseding');
+        const others = merged.filter(item => item?.metadata?.chunkBehavior !== 'superseding');
+        const insertCount = Math.max(1, Number(rag.insertCount) || 5);
+        merged = [...superseding, ...others].slice(0, insertCount);
 
         // Scene grouping only applies to Sharder Mode
         merged = isSharder ? orderWithSceneGrouping(merged) : merged;
