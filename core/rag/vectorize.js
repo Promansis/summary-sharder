@@ -23,6 +23,7 @@ import {
     chunkShardBySection,
     chunkProseSummary,
 } from './chunking.js';
+import { throwIfAborted } from '../api/abort-controller.js';
 
 const LOG_PREFIX = '[SummarySharder:RAG]';
 
@@ -58,6 +59,7 @@ async function listAllChunks(collectionId, ragSettings) {
     const limit = 200;
 
     while (true) {
+        throwIfAborted('rag vectorization');
         const { items, hasMore } = await listChunks(collectionId, ragSettings, { offset, limit });
         if (items.length === 0) break;
 
@@ -243,8 +245,9 @@ export async function synchronizeChatVectors(settings) {
  * @returns {Promise<{inserted: number, hash: string|null}>}
  */
 export async function vectorizeShard(shardText, startIdx, endIdx, settings, keywords = []) {
+    throwIfAborted('rag vectorization');
     const ragSettings = settings?.rag;
-    if (!ragSettings?.enabled || !ragSettings?.vectorizeShards) {
+    if (!ragSettings?.enabled) {
         return { inserted: 0, hash: null };
     }
 
@@ -254,6 +257,7 @@ export async function vectorizeShard(shardText, startIdx, endIdx, settings, keyw
 
     const chunk = chunkShard(shardText, startIdx, endIdx, effectiveKeywords);
     const collectionId = getShardCollectionId();
+    throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, [chunk], ragSettings);
 
     console.log(`${LOG_PREFIX} Vectorized shard ${startIdx}-${endIdx} into ${collectionId}`);
@@ -270,8 +274,9 @@ export async function vectorizeShard(shardText, startIdx, endIdx, settings, keyw
  * @returns {Promise<{inserted: number, deleted: number, supersedingReplaced: number, cumulativeAdded: number, rollingUpdated: number, rollingPurged: number, sectionFallbackToStandard: number}>}
  */
 export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, settings, keywords = []) {
+    throwIfAborted('rag vectorization');
     const ragSettings = settings?.rag;
-    if (!ragSettings?.enabled || !ragSettings?.vectorizeShards) {
+    if (!ragSettings?.enabled) {
         return {
             inserted: 0,
             deleted: 0,
@@ -392,11 +397,13 @@ export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, se
 
     const deleteList = [...hashesToDelete];
     if (deleteList.length > 0) {
+        throwIfAborted('rag vectorization');
         await deleteChunks(collectionId, deleteList, ragSettings);
     }
 
     let inserted = 0;
     if (toInsert.length > 0) {
+        throwIfAborted('rag vectorization');
         const result = await insertChunks(collectionId, toInsert, ragSettings);
         inserted = result.inserted || toInsert.length;
     }
@@ -420,8 +427,9 @@ export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, se
  * @returns {Promise<{inserted: number, total: number}>}
  */
 async function vectorizeAllShardsStandard(settings) {
+    throwIfAborted('rag vectorization');
     const ragSettings = settings?.rag;
-    if (!ragSettings?.enabled || !ragSettings?.vectorizeShards) {
+    if (!ragSettings?.enabled) {
         return { inserted: 0, total: 0 };
     }
 
@@ -440,6 +448,7 @@ async function vectorizeAllShardsStandard(settings) {
         return { inserted: 0, total: chunks.length };
     }
 
+    throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, toInsert, ragSettings);
     console.log(`${LOG_PREFIX} Bulk vectorized shard collection ${collectionId}: +${result.inserted || toInsert.length}`);
 
@@ -575,8 +584,9 @@ export async function vectorizeSingleMessageAtIndex(messageIndex, settings) {
  * @returns {Promise<{inserted: number, deleted: number, total: number, supersedingReplaced: number, cumulativeAdded: number, rollingUpdated: number, rollingPurged: number, sectionFallbackToStandard: number}>}
  */
 async function vectorizeAllShardsSectionAwareInternal(settings) {
+    throwIfAborted('rag vectorization');
     const ragSettings = settings?.rag;
-    if (!ragSettings?.enabled || !ragSettings?.vectorizeShards) {
+    if (!ragSettings?.enabled) {
         return {
             inserted: 0,
             deleted: 0,
@@ -612,6 +622,7 @@ async function vectorizeAllShardsSectionAwareInternal(settings) {
     let sectionFallbackToStandard = 0;
 
     for (const item of shardItems) {
+        throwIfAborted('rag vectorization');
         const result = await vectorizeShardSectionAware(
             item.text,
             item.startIndex,
@@ -762,8 +773,9 @@ async function collectStandardShards(settings) {
  * @returns {Promise<{inserted: number, hash: string|null}>}
  */
 export async function vectorizeStandardSummary(text, startIdx, endIdx, settings, keywords = []) {
+    throwIfAborted('rag vectorization');
     const ragStd = settings?.ragStandard;
-    if (!ragStd?.enabled || !ragStd?.vectorizeShards) {
+    if (!ragStd?.enabled) {
         return { inserted: 0, hash: null };
     }
 
@@ -775,6 +787,7 @@ export async function vectorizeStandardSummary(text, startIdx, endIdx, settings,
     if (chunks.length === 0) return { inserted: 0, hash: null };
 
     const collectionId = getStandardCollectionId();
+    throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, chunks, ragStd);
 
     console.log(`${LOG_PREFIX} Vectorized standard summary ${startIdx}-${endIdx} into ${collectionId}`);
@@ -787,8 +800,9 @@ export async function vectorizeStandardSummary(text, startIdx, endIdx, settings,
  * @returns {Promise<{inserted: number, total: number}>}
  */
 export async function vectorizeAllStandardSummaries(settings) {
+    throwIfAborted('rag vectorization');
     const ragStd = settings?.ragStandard;
-    if (!ragStd?.enabled || !ragStd?.vectorizeShards) {
+    if (!ragStd?.enabled) {
         return { inserted: 0, total: 0 };
     }
 
@@ -810,6 +824,7 @@ export async function vectorizeAllStandardSummaries(settings) {
         return { inserted: 0, total: allChunks.length };
     }
 
+    throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, toInsert, ragStd);
     console.log(`${LOG_PREFIX} Bulk vectorized standard collection ${collectionId}: +${result.inserted || toInsert.length}`);
 

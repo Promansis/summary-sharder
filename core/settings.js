@@ -193,7 +193,6 @@ export function getDefaultSettings() {
                 milvusToken: '',
             },
             // Vectorization
-            vectorizeShards: true,
             autoVectorizeNewSummaries: true,
             chunkingStrategy: 'per_message', // Deprecated (kept for migration compatibility)
             batchSize: 5,                    // Deprecated (kept for migration compatibility)
@@ -251,7 +250,6 @@ export function getDefaultSettings() {
                 milvusToken: '',
             },
             // Vectorization
-            vectorizeShards: true,
             autoVectorizeNewSummaries: true,
             proseChunkingMode: 'paragraph',     // 'full_summary' | 'paragraph'
             useLorebooksForVectorization: false,

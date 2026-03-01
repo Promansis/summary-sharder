@@ -23,7 +23,8 @@ import {
     createAbortController,
     getAbortSignal,
     clearAbortController,
-    abortCurrentOperation
+    abortCurrentOperation,
+    throwIfAborted
 } from './abort-controller.js';
 
 // Import SillyTavern's getRequestHeaders for API calls
@@ -234,10 +235,15 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
     let events;
     let originalContextWordCount;
     try {
+        throwIfAborted('event extraction');
         const extractionResult = await extractEventsFromMessages(messages, startIndex, endIndex, settings);
+        throwIfAborted('event extraction');
         events = extractionResult.events;
         originalContextWordCount = extractionResult.originalContextWordCount;
     } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw error;
+        }
         if (progressToast) toastr.clear(progressToast);
         toastr.error(`Event extraction failed: ${error.message}`);
         return;
@@ -254,7 +260,9 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
 
     // 2. Show modal for user review
     const { openEventsModal } = await import('../../ui/modals/summarization/events-modal.js');
+    throwIfAborted('event review');
     const result = await openEventsModal(events, messages, startIndex, endIndex, settings, originalContextWordCount);
+    throwIfAborted('event review');
 
     if (!result.confirmed) {
         toastr.info('Summary cancelled');
@@ -280,7 +288,9 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
     const finalWordCount = result.originalContextWordCount ?? originalContextWordCount;
 
     try {
+        throwIfAborted('summary generation');
         let summaryResult = await generateEventBasedSummary(selectedEvents, settings, '', finalWordCount);
+        throwIfAborted('summary generation');
 
         if (progressToast) toastr.clear(progressToast);
 
@@ -301,15 +311,20 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
         if (shouldShowSummaryReviewModal(reviewContext)) {
             // Create regenerate callback - uses original context word count for consistent length
             const regenerateCallback = async (userNote) => {
-                return await generateEventBasedSummary(selectedEvents, settings, userNote, finalWordCount);
+                throwIfAborted('summary regenerate');
+                const result = await generateEventBasedSummary(selectedEvents, settings, userNote, finalWordCount);
+                throwIfAborted('summary regenerate');
+                return result;
             };
 
+            throwIfAborted('summary review');
             const reviewResult = await openSummaryReviewModal(
                 summaryResult,
                 selectedEvents,
                 settings,
                 regenerateCallback
             );
+            throwIfAborted('summary review');
 
             if (!reviewResult.confirmed) {
                 toastr.info('Summary cancelled');
@@ -324,6 +339,7 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
         savePromptNameToMetadata(settings);
 
         // 6. Handle result (same as normal flow)
+        throwIfAborted('summary output');
         const outputResult = await handleSummaryResult(
             settings,
             finalSummary,
@@ -369,6 +385,10 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
         toastr.success('Summarization complete!');
 
     } catch (error) {
+        if (error?.name === 'AbortError') {
+            if (progressToast) toastr.clear(progressToast);
+            throw error;
+        }
         if (progressToast) toastr.clear(progressToast);
         console.error('[SummarySharder] Advanced summarization failed:', error);
         toastr.error(`Summarization failed: ${error.message}`);
@@ -464,7 +484,9 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
 
         console.log(`[SummarySharder] Summarizing messages ${startIndex} to ${endIndex}...`);
 
+        throwIfAborted('summary request');
         const rawResult = await callSummaryAPI(settings, systemPrompt, userPrompt);
+        throwIfAborted('summary response');
 
         // Parse keywords from response if extraction was requested
         const { summary: summaryResult, keywords: extractedKeywords } = parseSummaryResponse(rawResult);
@@ -496,19 +518,23 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
         if (shouldShowSummaryReviewModal(reviewContext)) {
             // Create regenerate callback
             const regenerateCallback = async (userNote) => {
+                throwIfAborted('summary regenerate');
                 const notePrompt = userNote ? `\n\nUSER NOTE: ${userNote}` : '';
                 const newUserPrompt = userPrompt + notePrompt;
                 const rawResult = await callSummaryAPI(settings, systemPrompt, newUserPrompt);
+                throwIfAborted('summary regenerate');
                 const { summary } = parseSummaryResponse(rawResult);
                 return summary;
             };
 
+            throwIfAborted('summary review');
             const reviewResult = await openSummaryReviewModal(
                 summaryResult,
                 null,  // No events in standard flow (simplified mode)
                 settings,
                 regenerateCallback
             );
+            throwIfAborted('summary review');
 
             if (!reviewResult.confirmed) {
                 toastr.info('Summary cancelled');
@@ -522,6 +548,7 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
         // Save prompt name for change detection
         savePromptNameToMetadata(settings);
 
+        throwIfAborted('summary output');
         const outputResult = await handleSummaryResult(
             settings,
             finalSummary,
@@ -582,6 +609,9 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
             console.log('[SummarySharder] Summarization aborted by user');
             if (!isQueueContext) {
                 toastr.info('Summarization stopped');
+            }
+            if (isQueueContext) {
+                throw error;
             }
             return;
         }

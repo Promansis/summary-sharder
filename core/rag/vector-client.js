@@ -7,6 +7,7 @@
 import { getRequestHeaders } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
 import { resolveRagEmbeddingApiKey } from './rag-secrets.js';
+import { getAbortSignal, throwIfAborted } from '../api/abort-controller.js';
 
 const LOG_PREFIX = '[SummarySharder:RAG]';
 const PLUGIN_BASE = '/api/plugins/similharity';
@@ -45,10 +46,13 @@ async function fetchDirectEmbedding(texts, ragSettings, apiKeyOverride = '') {
     const body = { input: texts };
     if (model) body.model = model;
 
+    const signal = getAbortSignal();
+    throwIfAborted('rag embedding');
     const response = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(body),
+        ...(signal ? { signal } : {}),
     });
 
     if (!response.ok) {
@@ -209,11 +213,20 @@ async function buildRequestBody(collectionId, ragSettings, extra = {}) {
  */
 async function pluginFetch(endpoint, options = {}) {
     const url = `${PLUGIN_BASE}${endpoint}`;
+    const {
+        method = 'GET',
+        body,
+        signal: optionSignal,
+        ...rest
+    } = options || {};
+    const signal = optionSignal ?? getAbortSignal();
+    throwIfAborted('rag request');
     const response = await fetch(url, {
-        method: options.method || 'GET',
+        method,
         headers: getRequestHeaders(),
-        ...options,
-        ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+        ...rest,
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        ...(signal ? { signal } : {}),
     });
 
     if (!response.ok) {

@@ -9,6 +9,7 @@ import { buildChunkHash } from './chunking.js';
 import { getShardCollectionId } from './collection-manager.js';
 import { extractKeywordsTfIdf } from './vectorize.js';
 import { insertChunks, listChunks } from './vector-client.js';
+import { throwIfAborted } from '../api/abort-controller.js';
 
 const LOG_PREFIX = '[SummarySharder:RAG:Archive]';
 const DEFAULT_COLD_ARCHIVE_LIMIT = 100;
@@ -129,6 +130,7 @@ async function listExistingHashes(collectionId, ragSettings) {
     const limit = 200;
 
     while (true) {
+        throwIfAborted('rag archive');
         const { items, hasMore } = await listChunks(collectionId, ragSettings, { offset, limit });
         if (!Array.isArray(items) || items.length === 0) break;
 
@@ -155,6 +157,7 @@ async function listExistingHashes(collectionId, ragSettings) {
  * @returns {Promise<{success:boolean, total:number, inserted:number, skipped:number, collectionId?:string, reason?:string, error?:string}>}
  */
 export async function archiveToWarm(items, startIndex, endIndex, settings, metadata = {}) {
+    throwIfAborted('rag archive');
     const ragSettings = settings?.rag;
     if (!ragSettings?.enabled) {
         return { success: false, total: 0, inserted: 0, skipped: 0, reason: 'rag-disabled' };
@@ -243,6 +246,7 @@ export async function archiveToWarm(items, startIndex, endIndex, settings, metad
             };
         }
 
+        throwIfAborted('rag archive');
         const insertResult = await insertChunks(collectionId, toInsert, ragSettings);
         const inserted = Number(insertResult?.inserted ?? toInsert.length);
         const skipped = chunks.length - toInsert.length;
@@ -277,6 +281,7 @@ export async function archiveToWarm(items, startIndex, endIndex, settings, metad
  * @returns {Promise<{success:boolean, appended:number, trimmed:number, total:number, reason?:string, error?:string}>}
  */
 export async function archiveToCold(items, startIndex, endIndex, chatId = null, metadata = {}) {
+    throwIfAborted('rag archive');
     const normalized = normalizeArchiveItems(items);
     if (normalized.length === 0) {
         return { success: true, appended: 0, trimmed: 0, total: 0 };
@@ -325,6 +330,7 @@ export async function archiveToCold(items, startIndex, endIndex, chatId = null, 
             trimmed += 1;
         }
 
+        throwIfAborted('rag archive');
         await saveChatConditional();
 
         return {

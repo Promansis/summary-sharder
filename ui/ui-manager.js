@@ -28,6 +28,8 @@ import {
     createRangeSliderPair,
     parseCommaTags,
     tagsToString,
+    infoHintHtml,
+    mountInfoHints,
 } from './common/index.js';
 export { updateApiStatusDisplays };
 
@@ -312,10 +314,13 @@ export function renderSettingsUI(settings, callbacks) {
                             </div>
 
                             <div class="ss-block">
-                                <label class="checkbox_label">
-                                    <input id="ss-sharder-mode" type="checkbox" />
-                                    <span>Sharder Mode</span>
-                                </label>
+                                <div class="ss-toggle-row">
+                                    <label class="checkbox_label">
+                                        <input id="ss-sharder-mode" type="checkbox" />
+                                        <span>Sharder Mode</span>
+                                    </label>
+                                    ${infoHintHtml('ss-sharder-mode-hint', 'Uses the structured 16-section Memory Shard workflow instead of basic summaries.')}
+                                </div>
                             </div>
 
                             <div class="ss-control-group">
@@ -376,26 +381,35 @@ export function renderSettingsUI(settings, callbacks) {
                         <div class="ss-accordion-content ss-hidden">
                             <div class="ss-control-group">
                                 <div id="ss-sharder-controls" class="ss-block ss-sharder-controls ss-hidden">                                                                      
-                                    <label class="checkbox_label">
-                                        <input id="ss-single-pass-auto-include-shards" type="checkbox" />
-                                        <span>Auto-include all existing shards</span>
-                                    </label>
+                                    <div class="ss-toggle-row">
+                                        <label class="checkbox_label">
+                                            <input id="ss-single-pass-auto-include-shards" type="checkbox" />
+                                            <span>Auto-include all existing shards</span>
+                                        </label>
+                                        ${infoHintHtml('ss-auto-include-shards-hint', 'Skips the shard selection modal and includes all shard sections by default.')}
+                                    </div>
                                     <p class="ss-hint">Skips selection modal</p>
                                 </div>
 
                                 <div id="ss-advanced-control-block" class="ss-block">
-                                    <label class="checkbox_label">
-                                        <input id="ss-advanced-control" type="checkbox" />
-                                        <span>Pre-Edit Events</span>
-                                    </label>
+                                    <div class="ss-toggle-row">
+                                        <label class="checkbox_label">
+                                            <input id="ss-advanced-control" type="checkbox" />
+                                            <span>Pre-Edit Events</span>
+                                        </label>
+                                        ${infoHintHtml('ss-pre-edit-events-hint', 'Extracts key events first so you can edit them before the summary is generated.')}
+                                    </div>
                                     <p class="ss-hint">Extract and review events before generating summary</p>
                                 </div>
 
                                 <div id="ss-summary-review-block" class="ss-block">
-                                    <label class="checkbox_label">
-                                        <input id="ss-summary-review-toggle" type="checkbox" />
-                                        <span>Summary Review</span>
-                                    </label>
+                                    <div class="ss-toggle-row">
+                                        <label class="checkbox_label">
+                                            <input id="ss-summary-review-toggle" type="checkbox" />
+                                            <span>Summary Review</span>
+                                        </label>
+                                        ${infoHintHtml('ss-summary-review-hint', 'Shows a review modal so you can edit the summary before it is saved or injected.')}
+                                    </div>
                                     <p class="ss-hint">Review generated summaries before injecting</p>
                                 </div>
 
@@ -525,6 +539,9 @@ export function renderSettingsUI(settings, callbacks) {
 
     container.insertAdjacentHTML('beforeend', settingsHtml);
     setupSettingsAccordionHandlers();
+    // Delegate from `document` so info hints keep working even if SillyTavern re-renders
+    // the extension settings DOM after initial mount.
+    mountInfoHints(document);
 
     const modeToggle = mountSegmentedToggle(
         'ss-mode-mount',

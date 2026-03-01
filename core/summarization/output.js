@@ -21,6 +21,7 @@ import {
     vectorizeStandardSummary,
 } from '../rag/vectorize.js';
 import { archiveToWarm, archiveToCold } from '../rag/archive.js';
+import { throwIfAborted } from '../api/abort-controller.js';
 
 // World info metadata key
 const METADATA_KEY = 'world_info';
@@ -49,6 +50,7 @@ export async function handleSummaryResult(
     archiveOptions = null,
     options = null
 ) {
+    throwIfAborted('summary output');
     const mode = settings?.outputMode === 'lorebook' ? 'lorebook' : 'system';
     let outputUID = null;
     let didInjectToContext = false;
@@ -74,10 +76,11 @@ export async function handleSummaryResult(
         }
     }
 
+    throwIfAborted('summary output');
     if (didInjectToContext) {
         if (settings?.sharderMode === true) {
             // Sharder mode: section-aware or standard shard vectorization
-            if (settings?.rag?.enabled && settings?.rag?.vectorizeShards && settings?.rag?.autoVectorizeNewSummaries !== false) {
+            if (settings?.rag?.enabled && settings?.rag?.autoVectorizeNewSummaries !== false) {
                 try {
                     const mode = resolveShardChunkingMode(settings?.rag);
                     if (mode === 'section') {
@@ -91,7 +94,7 @@ export async function handleSummaryResult(
             }
         } else {
             // Standard mode: prose vectorization into ss_standard_* collection
-            if (settings?.ragStandard?.enabled && settings?.ragStandard?.vectorizeShards && settings?.ragStandard?.autoVectorizeNewSummaries !== false) {
+            if (settings?.ragStandard?.enabled && settings?.ragStandard?.autoVectorizeNewSummaries !== false) {
                 try {
                     await vectorizeStandardSummary(summary, startIndex, endIndex, settings, extractedKeywords);
                 } catch (error) {
@@ -101,6 +104,7 @@ export async function handleSummaryResult(
         }
     }
 
+    throwIfAborted('summary output');
     if (didInjectToContext && resolvedArchiveOptions.archiveWarm) {
         const warmResult = await archiveToWarm(
             [{ text: summary, source: 'output-summary' }],
@@ -114,6 +118,7 @@ export async function handleSummaryResult(
         }
     }
 
+    throwIfAborted('summary output');
     if (didInjectToContext && resolvedArchiveOptions.archiveCold) {
         const coldResult = await archiveToCold(
             [{ text: summary, source: 'output-summary' }],
@@ -234,6 +239,7 @@ ${content}`;
     }
 
     // Save the chat to persist the new message
+    throwIfAborted('summary output');
     await saveChatConditional();
 
     console.log(`[SummarySharder] Inserted system message at position ${insertionIndex} (after message ${insertionIndex - 1})`);
@@ -387,6 +393,7 @@ function getEntryConfig(entryType) {
  */
 async function saveToSingleLorebook(lorebookName, summaryText, entryName, keywords, entryConfig, orderConfig) {
     try {
+        throwIfAborted('summary output');
         // Load the lorebook data
         const data = await loadWorldInfo(lorebookName);
         if (!data || !data.entries) {
@@ -418,6 +425,7 @@ async function saveToSingleLorebook(lorebookName, summaryText, entryName, keywor
         // Default order (100) is already set by createWorldInfoEntry
 
         // Save the lorebook
+        throwIfAborted('summary output');
         await saveWorldInfo(lorebookName, data, true);
 
         // Return the UID of the created entry

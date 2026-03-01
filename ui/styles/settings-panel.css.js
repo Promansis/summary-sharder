@@ -208,15 +208,22 @@ export const SETTINGS_PANEL_CSS = `
 }
 
 #summary-sharder-settings .ss-toggle-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: 10px;
+    column-gap: 10px;
     min-height: 32px;
 }
 
 #summary-sharder-settings .ss-toggle-row > label {
-    flex: 1;
+    min-width: 0;
     margin: 0;
+}
+
+#summary-sharder-settings .ss-toggle-row .ss-info-hint-btn {
+    justify-self: end;
+    pointer-events: auto;
+    z-index: 1;
 }
 
 #summary-sharder-settings .ss-api-status-group {

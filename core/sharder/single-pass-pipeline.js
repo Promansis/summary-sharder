@@ -6,7 +6,7 @@ import { getSharderPrompts } from '../summarization/prompts.js';
 import { parseExtractionResponse, reconstructExtraction, parseSceneCodes } from '../summarization/sharder-pipeline.js';
 import { callSillyTavernAPI, callExternalAPI } from '../api/api-client.js';
 import { callConnectionProfileAPI } from '../api/connection-profile-api.js';
-import { getAbortSignal } from '../api/abort-controller.js';
+import { getAbortSignal, throwIfAborted } from '../api/abort-controller.js';
 import { getFeatureApiSettings } from '../api/feature-api-config.js';
 import { sanitizeSinglePassSections } from './canonical-sanitizer.js';
 import { validateSinglePassOutput, getSinglePassSeverity } from './fidelity-validator.js';
@@ -132,6 +132,7 @@ export async function runSharderPipeline(chatText, settings, context) {
     }
 
     const raw = await callSharderApi(settings, systemPrompt, userPrompt);
+    throwIfAborted('sharder api');
     const parsedResult = context.extractKeywords ? parseSummaryResponse(raw) : { summary: raw, keywords: [] };
     const cleanedRaw = parsedResult.summary || raw;
     const parsed = parseExtractionResponse(cleanedRaw);

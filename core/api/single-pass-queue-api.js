@@ -8,7 +8,8 @@ import { getFeatureApiSettings } from './feature-api-config.js';
 import { showSsConfirm } from '../../ui/common/modal-base.js';
 import {
     createAbortController,
-    clearAbortController
+    clearAbortController,
+    throwIfAborted
 } from './abort-controller.js';
 import { startUiOperation, updateUiOperation, endUiOperation } from './api-ui-helpers.js';
 import { runSharderHeadless } from './single-pass-api.js';
@@ -165,6 +166,7 @@ function reconcileDomMesidsAfterBatch(systemInsertionIndices = []) {
 }
 
 async function saveSinglePassOutput(range, settings, finalOutput, extractedKeywords = [], archiveOptions = null) {
+    throwIfAborted('sharder batch save');
     const contextBefore = SillyTavern.getContext();
     const chatBefore = contextBefore?.chat || [];
 
@@ -174,6 +176,7 @@ async function saveSinglePassOutput(range, settings, finalOutput, extractedKeywo
         throw new Error(`One or more messages in range ${range.start}-${range.end} no longer exist`);
     }
 
+    throwIfAborted('sharder batch output');
     const outputResult = await handleSummaryResult(
         settings,
         finalOutput,
@@ -195,6 +198,7 @@ async function saveSinglePassOutput(range, settings, finalOutput, extractedKeywo
         };
     }
 
+    throwIfAborted('sharder batch output');
     const contextAfter = SillyTavern.getContext();
     const chatAfter = contextAfter?.chat || [];
     const freshStartAfterSave = range.startUID ? findIndexByUID(chatAfter, range.startUID) : freshStartBeforeSave;
@@ -299,6 +303,7 @@ export async function runSharderQueue(ranges, settings, batchConfig = {}) {
         };
 
         const generateAt = async (index) => {
+            throwIfAborted('sharder batch');
             const current = index + 1;
             const baseRange = rangesWithUIDs[index];
 
@@ -328,6 +333,7 @@ export async function runSharderQueue(ranges, settings, batchConfig = {}) {
             );
 
             const headless = await runSharderHeadless(runtimeRange.start, runtimeRange.end, settings, []);
+            throwIfAborted('sharder batch');
             return {
                 index,
                 runtimeRange,
@@ -343,6 +349,7 @@ export async function runSharderQueue(ranges, settings, batchConfig = {}) {
                     let saveResult = null;
                     try {
                         internalMutationInFlight = true;
+                        throwIfAborted('sharder batch save');
                         saveResult = await saveSinglePassOutput(
                             generated.runtimeRange,
                             settings,
@@ -459,6 +466,7 @@ export async function runSharderQueue(ranges, settings, batchConfig = {}) {
                         let saveResult = null;
                         try {
                             internalMutationInFlight = true;
+                            throwIfAborted('sharder batch save');
                             saveResult = await saveSinglePassOutput(
                                 generated.runtimeRange,
                                 settings,
@@ -489,12 +497,16 @@ export async function runSharderQueue(ranges, settings, batchConfig = {}) {
                     });
 
                     const regenFn = async () => {
+                        throwIfAborted('sharder batch regenerate');
                         const rerunRange = resolveRuntimeRange(rangesWithUIDs[index]);
                         const rerun = await runSharderHeadless(rerunRange.start, rerunRange.end, settings, []);
+                        throwIfAborted('sharder batch regenerate');
                         return rerun.result;
                     };
 
+                    throwIfAborted('sharder batch review');
                     const review = await openSharderReviewModal(generated.headless.result, settings, regenFn);
+                    throwIfAborted('sharder batch review');
 
                     if (!review.confirmed) {
                         skipped++;
@@ -505,6 +517,7 @@ export async function runSharderQueue(ranges, settings, batchConfig = {}) {
                     let saveResult = null;
                     try {
                         internalMutationInFlight = true;
+                        throwIfAborted('sharder batch save');
                         saveResult = await saveSinglePassOutput(
                             generated.runtimeRange,
                             settings,

@@ -14,7 +14,8 @@ import {
 } from '../chat/range-operations.js';
 import {
     createAbortController,
-    clearAbortController
+    clearAbortController,
+    throwIfAborted
 } from './abort-controller.js';
 import { startUiOperation, endUiOperation } from './api-ui-helpers.js';
 
@@ -116,6 +117,7 @@ export async function runSharderHeadless(startIndex, endIndex, settings, selecte
         selectedShards,
         extractKeywords
     );
+    throwIfAborted('sharder pipeline');
 
     return {
         result,
@@ -169,11 +171,13 @@ export async function runSharder(startIndex, endIndex, settings, selectedShards 
         );
 
         const headless = await runSharderHeadless(startIndex, endIndex, settings, selectedShards);
+        throwIfAborted('sharder generation');
 
         const { openSharderReviewModal } = await import('../../ui/modals/summarization/single-pass-review-modal.js');
 
         const regenFn = async () => {
-            return await runPipelineWithAnalysis(
+            throwIfAborted('sharder regenerate');
+            const result = await runPipelineWithAnalysis(
                 headless.chatText,
                 settings,
                 startIndex,
@@ -181,15 +185,20 @@ export async function runSharder(startIndex, endIndex, settings, selectedShards 
                 selectedShards,
                 headless.extractKeywords
             );
+            throwIfAborted('sharder regenerate');
+            return result;
         };
 
+        throwIfAborted('sharder review');
         const review = await openSharderReviewModal(headless.result, settings, regenFn);
+        throwIfAborted('sharder review');
 
         if (!review.confirmed) {
             toastr.info('Sharder cancelled');
             return;
         }
 
+        throwIfAborted('sharder output');
         const outputResult = await handleSummaryResult(
             settings,
             review.finalOutput,

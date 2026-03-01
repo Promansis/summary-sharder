@@ -295,12 +295,6 @@ function renderModalHtml(rag, isSharder) {
                     <div class="ss-rag-vectorization-grid">
                         <div class="ss-block">
                             <label class="checkbox_label">
-                                <input id="ss-rag-vectorize-shards" class="ss-rag-control" type="checkbox" ${rag.vectorizeShards ? 'checked' : ''} />
-                                <span>Vectorize Memory Shards ${infoHintHtml('ss-rag-vectorize-shards-hint', 'Only extension-generated summaries/shards are indexed.')}</span>
-                            </label>
-                        </div>
-                        <div class="ss-block">
-                            <label class="checkbox_label">
                                 <input id="ss-rag-auto-vectorize-new" class="ss-rag-control" type="checkbox" ${rag.autoVectorizeNewSummaries ? 'checked' : ''} />
                                 <span>Auto-Vector New Summaries</span>
                             </label>
@@ -344,7 +338,7 @@ function renderModalHtml(rag, isSharder) {
                         <div class="ss-block">
                             <label class="checkbox_label">
                                 <input id="ss-rag-reranker-enabled" class="ss-rag-control" type="checkbox" ${rag.reranker?.enabled ? 'checked' : ''} />
-                                <span>Enable Re-ranker (Optional)</span>
+                                <span>Enable Re-ranker (Optional) ${infoHintHtml('ss-rag-reranker-enabled-hint', 'Re-sorts retrieved chunks with a stronger relevance model so the most useful memories rise to the top.')}</span>
                             </label>
                         </div>
                         <div id="ss-rag-reranker-config" class="${rag.reranker?.enabled ? '' : 'ss-hidden'}">
@@ -388,14 +382,14 @@ function renderModalHtml(rag, isSharder) {
                             <input id="ss-rag-protect-count" class="text_pole ss-rag-control" type="number" min="0" value="${rag.protectCount ?? 5}" />
                         </div>
                         <div class="ss-block">
-                            <label for="ss-rag-threshold">Score Threshold</label>
+                            <label for="ss-rag-threshold">Score Threshold ${infoHintHtml('ss-rag-score-threshold-hint', 'Minimum relevance score a chunk must meet to be included (0-1). Higher = stricter.')}</label>
                             <div id="ss-rag-threshold-host"></div>
                         </div>
                     </div>
 
                     <div class="ss-rag-grid-two">
                         <div class="ss-block">
-                            <label for="ss-rag-scoring">Scoring Method</label>
+                            <label for="ss-rag-scoring">Scoring Method ${infoHintHtml('ss-rag-scoring-method-hint', 'How matches are scored: keyword, BM25, or hybrid (vector + BM25).')}</label>
                             <select id="ss-rag-scoring" class="text_pole ss-rag-control">
                                 <option value="keyword" ${rag.scoringMethod === 'keyword' ? 'selected' : ''}>Keyword</option>
                                 <option value="bm25" ${rag.scoringMethod === 'bm25' ? 'selected' : ''}>BM25</option>
@@ -404,7 +398,7 @@ function renderModalHtml(rag, isSharder) {
                             <p class="ss-rag-inline-hint ss-text-hint" id="ss-rag-hybrid-hint"></p>
                         </div>
                         <div class="ss-block">
-                            <label for="ss-rag-injection-mode">Injection Mode</label>
+                            <label for="ss-rag-injection-mode">Injection Mode ${infoHintHtml('ss-rag-injection-mode-hint', 'Where memories are inserted: the extension prompt or a variable you place in your prompt text.')}</label>
                             <select id="ss-rag-injection-mode" class="text_pole ss-rag-control">
                                 <option value="extension_prompt" ${(rag.injectionMode ?? 'extension_prompt') === 'extension_prompt' ? 'selected' : ''}>Extension Prompt (Position / Depth)</option>
                                 <option value="variable" ${rag.injectionMode === 'variable' ? 'selected' : ''}>Variable ({{getvar::...}})</option>
@@ -440,11 +434,11 @@ function renderModalHtml(rag, isSharder) {
                     <div id="ss-rag-hybrid-controls" class="${rag.scoringMethod === 'hybrid' ? '' : 'ss-hidden'}">
                         <div class="ss-rag-grid-two">
                             <div class="ss-block">
-                                <label for="ss-rag-hybrid-fusion">Hybrid Fusion Method</label>
+                                <label for="ss-rag-hybrid-fusion">Hybrid Fusion Method ${infoHintHtml('ss-rag-hybrid-fusion-hint', 'How vector and BM25 scores are combined (RRF or weighted blend).')}</label>
                                 <div id="ss-rag-hybrid-fusion-host"></div>
                             </div>
                             <div class="ss-block">
-                                <label for="ss-rag-hybrid-overfetch">Hybrid Overfetch Multiplier</label>
+                                <label for="ss-rag-hybrid-overfetch">Hybrid Overfetch Multiplier ${infoHintHtml('ss-rag-hybrid-overfetch-hint', 'Fetches extra candidates before fusion so hybrid scoring has more to choose from. Higher = more recall, more cost.')}</label>
                                 <input id="ss-rag-hybrid-overfetch" class="text_pole ss-rag-control" type="number" min="1" max="12" value="${rag.hybridOverfetchMultiplier ?? 4}" />
                             </div>
                         </div>
@@ -454,7 +448,7 @@ function renderModalHtml(rag, isSharder) {
                                 <input id="ss-rag-hybrid-rrf-k" class="text_pole ss-rag-control" type="number" min="1" max="500" value="${rag.hybridRrfK ?? 60}" />
                             </div>
                             <div class="ss-block ${showWeightedSlider ? '' : 'ss-hidden'}" id="ss-rag-weighted-slider-wrap">
-                                <label for="ss-rag-hybrid-weight">Vector vs BM25</label>
+                                <label for="ss-rag-hybrid-weight">Vector vs BM25 ${infoHintHtml('ss-rag-hybrid-weight-hint', 'Adjusts how much semantic similarity (vector) vs keyword relevance (BM25) contributes in hybrid mode.')}</label>
                                 <div class="ss-rag-weighted-scale">
                                     <span class="ss-rag-weighted-label">Vector <strong id="ss-rag-hybrid-weight-vector">${formatWeight(normalizedWeights.alpha)}</strong></span>
                                     <span class="ss-rag-weighted-label">BM25 <strong id="ss-rag-hybrid-weight-bm25">${formatWeight(normalizedWeights.beta)}</strong></span>
@@ -482,7 +476,7 @@ function renderModalHtml(rag, isSharder) {
                     <div class="ss-block">
                         <label class="checkbox_label">
                             <input id="ss-rag-scene-expand" class="ss-rag-control" type="checkbox" ${rag.sceneExpansion !== false ? 'checked' : ''} />
-                            <span>Scene Expansion</span>
+                            <span>Scene Expansion ${infoHintHtml('ss-rag-scene-expansion-hint', 'If a chunk from a scene is found, pull in the rest of that scene for fuller context.')}</span>
                         </label>
                     </div>
                     <div class="ss-block ${rag.sceneExpansion !== false ? '' : 'ss-hidden'}" id="ss-rag-scene-max-wrap">
@@ -777,7 +771,6 @@ function readRagDraft(base, isSharder) {
         secretId: base.reranker?.secretId || null,
     };
 
-    draft.vectorizeShards = !!document.getElementById('ss-rag-vectorize-shards')?.checked;
     draft.autoVectorizeNewSummaries = !!document.getElementById('ss-rag-auto-vectorize-new')?.checked;
     draft.useLorebooksForVectorization = !!document.getElementById('ss-rag-use-lorebooks-vectorization')?.checked;
     draft.includeLorebooksInShardSelection = !!document.getElementById('ss-rag-include-lorebook-shards')?.checked;
@@ -857,7 +850,6 @@ function updateDomFromDraft(draft, isSharder) {
     setValue('ss-rag-milvus-address', draft.backendConfig?.milvusAddress || 'localhost:19530');
     setValue('ss-rag-milvus-token', draft.backendConfig?.milvusToken || '');
 
-    setChecked('ss-rag-vectorize-shards', draft.vectorizeShards !== false);
     setChecked('ss-rag-auto-vectorize-new', draft.autoVectorizeNewSummaries !== false);
     setChecked('ss-rag-use-lorebooks-vectorization', draft.useLorebooksForVectorization === true);
     setChecked('ss-rag-include-lorebook-shards', draft.includeLorebooksInShardSelection === true);
@@ -1043,7 +1035,6 @@ function buildRagDraftFromSource(src, isSharder) {
             milvusAddress: source.backendConfig?.milvusAddress || 'localhost:19530',
             milvusToken: source.backendConfig?.milvusToken || '',
         },
-        vectorizeShards: source.vectorizeShards !== false,
         autoVectorizeNewSummaries: source.autoVectorizeNewSummaries !== false,
         useLorebooksForVectorization: source.useLorebooksForVectorization === true,
         vectorizationLorebookNames: Array.isArray(source.vectorizationLorebookNames)

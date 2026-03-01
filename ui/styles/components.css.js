@@ -273,7 +273,10 @@ export const COMPONENTS_CSS = `
 
 .ss-info-hint-popover {
     position: absolute;
-    max-width: 280px;
+    display: inline-block;
+    width: 320px !important;
+    max-width: calc(100vw - 32px) !important;
+    box-sizing: border-box;
     padding: 8px 10px;
     border-radius: 6px;
     border: 1px solid var(--ss-border) !important;
@@ -282,7 +285,16 @@ export const COMPONENTS_CSS = `
     color: var(--ss-text-primary);
     font-size: 12px;
     line-height: 1.4;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
     z-index: 2147483647;
     box-shadow: var(--ss-shadow);
+}
+
+.popup .ss-info-hint-popover,
+.ss-modal .ss-info-hint-popover {
+    width: 320px !important;
+    max-width: calc(100vw - 32px) !important;
 }
 `;
