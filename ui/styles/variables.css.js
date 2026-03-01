@@ -11,7 +11,8 @@ export const VARIABLES_CSS = `
 .popup.ss-owned-popup,
 .ss-fab,
 .ss-fab-panels,
-.ss-fab-generating {
+.ss-fab-generating,
+.ss-info-hint-popover {
     /* Primary colors */
     --ss-primary: var(--SmartThemeQuoteColor, rgba(198, 198, 198, 1));
     --ss-primary-hover: var(--SmartThemeQuoteColor, rgba(128, 128, 128, 1));

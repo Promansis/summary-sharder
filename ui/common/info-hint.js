@@ -24,24 +24,14 @@ const resolveHintContainer = (button) => {
     const popup = button?.closest?.('.popup') || null;
     const modalRoot = button?.closest?.('.ss-modal') || button?.closest?.('[class*="ss-"][class*="-modal"]') || null;
 
-    // Prefer popups when we're inside an actual modal/popup surface (keeps the hint above modal overlays).
+    // Prefer popups when we're inside an actual Summary Sharder modal surface.
+    // This keeps the hint above the modal and correctly aligned if the modal is dragged.
     if (popup && modalRoot) {
         return popup;
     }
 
-    // Some SillyTavern pages may have non-modal `.popup` ancestors (layout/containers). If we mount
-    // inside those, the popover can be clipped or end up behind other UI. Treat only high z-index,
-    // positioned `.popup` nodes as "modal" containers; otherwise mount to body.
-    if (popup) {
-        const style = window.getComputedStyle(popup);
-        const positionOk = style.position === 'fixed' || style.position === 'absolute';
-        const z = parseInt(style.zIndex || '', 10);
-        const zOk = Number.isFinite(z) && z >= 100;
-        if (positionOk && zOk) {
-            return popup;
-        }
-    }
-
+    // Fall back to document.body for everything else (sidebars, standard ST settings).
+    // This ensures popovers aren't clipped by 'overflow: hidden' on layout containers.
     return document.body;
 };
 
@@ -103,8 +93,12 @@ const positionPopover = (popover, button, anchorEvent, container) => {
         top = top - containerRect.top + (container.scrollTop || 0);
     }
 
-    popover.style.left = `${Math.round(left)}px`;
-    popover.style.top = `${Math.round(top)}px`;
+    // Safety: ensure we never set NaN/Infinity which makes the element invisible or at 0,0.
+    const safeLeft = Number.isFinite(left) ? Math.round(left) : 0;
+    const safeTop = Number.isFinite(top) ? Math.round(top) : 0;
+
+    popover.style.setProperty('left', `${safeLeft}px`, 'important');
+    popover.style.setProperty('top', `${safeTop}px`, 'important');
 };
 
 const showPopover = (button, trigger, anchorEvent) => {
@@ -138,7 +132,9 @@ const showPopover = (button, trigger, anchorEvent) => {
     popover.className = 'ss-info-hint-popover';
     popover.textContent = text;
     popover.setAttribute('role', 'tooltip');
-    popover.style.position = container === document.body ? 'fixed' : 'absolute';
+    popover.style.setProperty('position', container === document.body ? 'fixed' : 'absolute', 'important');
+    popover.style.setProperty('z-index', '2147483647', 'important');
+
     const computed = window.getComputedStyle(button);
     const cssVars = [
         '--ss-bg-primary',
@@ -249,6 +245,13 @@ export function mountInfoHints(container) {
             if (!button) return;
             if (root !== document && !root.contains(button)) return;
             if (button.contains(event.relatedTarget)) return;
+
+            // Suppress native browser tooltip while we are handling the hover.
+            if (button.hasAttribute('title')) {
+                button.dataset.ssOriginalTitle = button.getAttribute('title');
+                button.removeAttribute('title');
+            }
+
             if (activeTrigger === 'click') return;
             showPopover(button, 'hover', event);
         }, true);
@@ -258,6 +261,13 @@ export function mountInfoHints(container) {
             if (!button) return;
             if (root !== document && !root.contains(button)) return;
             if (button.contains(event.relatedTarget)) return;
+
+            // Restore native tooltip when mouse leaves.
+            if (button.dataset.ssOriginalTitle) {
+                button.setAttribute('title', button.dataset.ssOriginalTitle);
+                delete button.dataset.ssOriginalTitle;
+            }
+
             if (activeButton === button && activeTrigger === 'hover') {
                 removeActivePopover();
             }
