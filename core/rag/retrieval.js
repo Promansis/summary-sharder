@@ -49,6 +49,50 @@ function getFreshnessEndIndex(item) {
 }
 
 /**
+ * Parse scene code into numeric parts for sorting.
+ * Supports S{shard}:{scene} format.
+ * @param {string} code
+ * @returns {{shard: number, scene: number}|null}
+ */
+function parseSceneCode(code) {
+    const match = String(code || '').match(/S(\d+):(\d+)/i);
+    if (!match) return null;
+    return {
+        shard: parseInt(match[1], 10),
+        scene: parseInt(match[2], 10),
+    };
+}
+
+/**
+ * Compare two items chronologically.
+ * Prioritizes parsed scene codes, falls back to freshness index.
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number}
+ */
+function compareChronologically(a, b) {
+    const codeA = a?.metadata?.sceneCode;
+    const codeB = b?.metadata?.sceneCode;
+    const pA = parseSceneCode(codeA);
+    const pB = parseSceneCode(codeB);
+
+    if (pA && pB) {
+        if (pA.shard !== pB.shard) return pA.shard - pB.shard;
+        return pA.scene - pB.scene;
+    }
+
+    const fA = getFreshnessEndIndex(a);
+    const fB = getFreshnessEndIndex(b);
+    if (fA !== fB) return fA - fB;
+
+    // Same freshness (likely same shard), prefer the one with a scene code
+    if (pA && !pB) return -1;
+    if (!pA && pB) return 1;
+
+    return 0;
+}
+
+/**
  * @param {Array<Object>} chat
  * @param {number} queryCount
  * @returns {string}
@@ -189,6 +233,7 @@ function orderWithSceneGrouping(results) {
     const superseding = [];
     const legacyNoScene = [];
 
+    // Categorize items by behavior
     for (const item of results) {
         const behavior = item?.metadata?.chunkBehavior || null;
         if (behavior === 'superseding') {
@@ -217,12 +262,13 @@ function orderWithSceneGrouping(results) {
         sceneBuckets.get(sceneCode).push(item);
     }
 
+    // Sort items within buckets and non-bucketed categories
     for (const bucket of sceneBuckets.values()) {
-        bucket.sort((a, b) => getFreshnessEndIndex(a) - getFreshnessEndIndex(b));
+        bucket.sort(compareChronologically);
     }
 
     superseding.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
-    cumulativeNoScene.sort((a, b) => getFreshnessEndIndex(a) - getFreshnessEndIndex(b));
+    cumulativeNoScene.sort(compareChronologically);
     rolling.sort((a, b) => {
         const scoreDelta = (Number(b?.score) || 0) - (Number(a?.score) || 0);
         if (scoreDelta !== 0) return scoreDelta;
@@ -230,23 +276,38 @@ function orderWithSceneGrouping(results) {
     });
     legacyNoScene.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
 
+    // Initialize ordered list with superseding (Current State) items at the top
     const ordered = [...superseding];
     const usedScenes = new Set();
 
-    const sceneLeads = [...results]
-        .filter(item => !!item?.metadata?.sceneCode)
-        .sort((a, b) => getFreshnessEndIndex(a) - getFreshnessEndIndex(b));
-
-    for (const item of sceneLeads) {
-        const sceneCode = item?.metadata?.sceneCode || null;
-        if (!sceneCode || usedScenes.has(sceneCode)) continue;
-        usedScenes.add(sceneCode);
-        ordered.push(...(sceneBuckets.get(sceneCode) || []));
+    // Determine the global chronological order of scenes and interleaved cumulative items
+    // First, find a "lead" item for each unique scene to represent its position
+    const sceneLeads = [];
+    for (const [code, items] of sceneBuckets.entries()) {
+        // Use the first item in the sorted bucket as the lead
+        sceneLeads.push(items[0]);
     }
 
-    ordered.push(...cumulativeNoScene);
+    // Combine scene leads and items without scene codes into a single sortable sequence
+    const timelineSequence = [...sceneLeads, ...cumulativeNoScene].sort(compareChronologically);
+
+    for (const item of timelineSequence) {
+        const sceneCode = item?.metadata?.sceneCode || null;
+        if (sceneCode) {
+            if (usedScenes.has(sceneCode)) continue;
+            usedScenes.add(sceneCode);
+            // Append the whole bucket for this scene (now in its correct chronological slot)
+            ordered.push(...(sceneBuckets.get(sceneCode) || []));
+        } else {
+            // Append cumulative items that don't have a scene code (interleaved chronologically)
+            ordered.push(item);
+        }
+    }
+
+    // Append rolling and legacy items at the end
     ordered.push(...rolling);
     ordered.push(...legacyNoScene);
+
     return dedupeResults(ordered);
 }
 
