@@ -47,10 +47,10 @@ async function callSharderApi(settings, systemPrompt, userPrompt) {
  * @returns {{summary:string, keywords:string[]}}
  */
 function parseSummaryResponse(response) {
-    const text = String(response || '');
+    const text = String(response || '').trimEnd();
     const keywordsMatch = text.match(/\nKEYWORDS:\s*(.+)$/i);
     if (!keywordsMatch) {
-        return { summary: text, keywords: [] };
+        return { summary: response, keywords: [] };
     }
 
     const keywords = keywordsMatch[1]

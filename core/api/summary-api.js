@@ -83,13 +83,14 @@ async function callSummaryAPI(settings, systemPrompt, userPrompt) {
  * @returns {{ summary: string, keywords: string[] }}
  */
 function parseSummaryResponse(response) {
-    const keywordsMatch = response.match(/\nKEYWORDS:\s*(.+)$/i);
+    const trimmed = (response || '').trimEnd();
+    const keywordsMatch = trimmed.match(/\nKEYWORDS:\s*(.+)$/i);
     if (keywordsMatch) {
         const keywords = keywordsMatch[1]
             .split(',')
             .map(k => k.trim())
             .filter(k => k.length > 0);
-        const summary = response.replace(/\nKEYWORDS:\s*.+$/i, '').trim();
+        const summary = trimmed.replace(/\nKEYWORDS:\s*.+$/i, '').trim();
         return { summary, keywords };
     }
     return { summary: response, keywords: [] };
@@ -287,10 +288,21 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
     // Get the final word count (may have been updated during regeneration in events modal)
     const finalWordCount = result.originalContextWordCount ?? originalContextWordCount;
 
+    // Determine if keyword extraction is needed (lorebook mode with extraction enabled)
+    const extractKeywords = settings.outputMode === 'lorebook' &&
+        settings.lorebookEntryOptions?.extractKeywords !== false;
+
     try {
         throwIfAborted('summary generation');
-        let summaryResult = await generateEventBasedSummary(selectedEvents, settings, '', finalWordCount);
+        const rawSummaryResult = await generateEventBasedSummary(selectedEvents, settings, '', finalWordCount, extractKeywords);
         throwIfAborted('summary generation');
+
+        // Parse keywords from the response (stripped before showing in UI)
+        const { summary: summaryResult, keywords: extractedKeywords } = parseSummaryResponse(rawSummaryResult);
+
+        if (extractedKeywords.length > 0) {
+            console.log(`[SummarySharder] Extracted keywords (advanced): ${extractedKeywords.join(', ')}`);
+        }
 
         if (progressToast) toastr.clear(progressToast);
 
@@ -312,9 +324,10 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
             // Create regenerate callback - uses original context word count for consistent length
             const regenerateCallback = async (userNote) => {
                 throwIfAborted('summary regenerate');
-                const result = await generateEventBasedSummary(selectedEvents, settings, userNote, finalWordCount);
+                const raw = await generateEventBasedSummary(selectedEvents, settings, userNote, finalWordCount, extractKeywords);
                 throwIfAborted('summary regenerate');
-                return result;
+                const { summary } = parseSummaryResponse(raw);
+                return summary;
             };
 
             throwIfAborted('summary review');
@@ -346,7 +359,7 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
             startIndex,
             endIndex,
             isQueueContext,
-            [],
+            extractedKeywords,
             insertAfterUID,
             archiveOptions
         );

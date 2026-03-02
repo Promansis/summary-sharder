@@ -115,6 +115,7 @@ function buildActionsPanel(snapshot) {
             actionBtn('vectorize', 'fa-database', 'Vectorize Chat'),
             actionBtn('purge-vectors', 'fa-trash', 'Purge Vectors'),
             actionBtn('browse-vectors', 'fa-compass', 'Browse Vectors'),
+            actionBtn('rag-history', 'fa-clock-rotate-left', 'RAG History'),
         ];
         sections.push({ title: 'RAG', items, layout: 'grid' });
     }
@@ -203,7 +204,6 @@ function buildAdvancedPanel(snapshot) {
     if (snapshot.ragEnabled) {
         managementSection.items.push(
             actionBtn('rag-debug', 'fa-bug', 'RAG Debug'),
-            actionBtn('rag-history', 'fa-clock-rotate-left', 'RAG History'),
         );
     }
 

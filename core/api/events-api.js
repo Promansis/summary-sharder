@@ -170,9 +170,10 @@ Extract all significant events from the above conversation and return them as a 
  * @param {Object} settings - Extension settings
  * @param {string} userNote - Optional user note for regeneration
  * @param {number} originalContextWordCount - Word count of original context (for length calculations)
- * @returns {Promise<string>} Generated summary text
+ * @param {boolean} extractKeywords - Whether to append keyword extraction instruction
+ * @returns {Promise<string>} Generated summary text (may include KEYWORDS line if extractKeywords is true)
  */
-export async function generateEventBasedSummary(selectedEvents, settings, userNote = '', originalContextWordCount = null) {
+export async function generateEventBasedSummary(selectedEvents, settings, userNote = '', originalContextWordCount = null, extractKeywords = false) {
     const summaryPrompt = getActivePrompt(settings);
 
     if (!summaryPrompt) {
@@ -216,6 +217,15 @@ Please incorporate this feedback into the summary.`;
     if (settings.summaryLengthControl) {
         const wordCountForLength = originalContextWordCount ?? eventsText;
         userPrompt += buildLengthInstruction(wordCountForLength, settings.summaryLengthPercent || 10);
+    }
+
+    // Add keyword extraction instruction if enabled
+    if (extractKeywords) {
+        userPrompt += `
+
+---
+After your summary, on a new line, provide exactly 5 keywords that capture the key characters, locations, events, or topics from this content. Format as:
+KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
     }
 
     console.log('[SummarySharder] Generating event-based summary...');
