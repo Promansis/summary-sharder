@@ -85,19 +85,31 @@ export function resetEventsPrompt(settings) {
 /**
  * The default summary  prompt 
  */
-export const DEFAULT_PROMPT = `Summarize the provided chat messages into an information-dense summary. The summary must:
-- Have a clear, descriptive title.
-- Include specific details: character names, locations, items, emotional beats, relationship developments, and plot progression.
-- Capture what happened, who was involved, where it occurred, and any significant outcomes or revelations.
-- Use past tense throughout.
-Prioritize:
-1. Major plot events and story progression
-2. Character development and relationship changes
-3. World-building details (locations, lore, rules established)
-4. Important dialogue revelations or decisions
-5. Emotional turning points or conflicts
-Format: Do not include any preamble, closing remarks, or meta-commentary.
-`;
+export const DEFAULT_PROMPT = `Summarize the provided chat messages as a structured prose summary optimized for long-term memory retrieval.
+
+RULES:
+- Write in past tense, third person.
+- Always use character names — never pronouns without the name in the same sentence.
+- Each paragraph must be self-contained: a reader seeing only that paragraph should understand who, what, where, and why.
+- Front-load each paragraph with the most important noun (character name, location, or item) for searchability.
+- Collapse repetitive actions into single outcome statements. Do not log micro-steps.
+- Only include details explicitly present in the source messages. Do not infer or invent.
+
+STRUCTURE (use exactly these headings, skip any section with no content):
+
+**Events**
+One paragraph per significant plot event, in chronological order. Each paragraph: who acted, what happened, where, and the outcome. Merge minor events into a single paragraph. Max 5 paragraphs.
+
+**Characters**
+One paragraph per character who changed meaningfully (relationship shift, emotional turning point, new ability, injury, or decision). State the change and its cause. Max 3 paragraphs.
+
+**World**
+One paragraph for any new world rules, locations, lore, or setting details established. Only include if new information was introduced. Max 1 paragraph.
+
+**Status**
+Exactly one paragraph. Current state snapshot: where the characters are now, what situation they face, what is unresolved, and any immediate threats or goals. This paragraph is mandatory even if short.
+
+OUTPUT: Produce only the structured summary. No preamble, no closing remarks, no meta-commentary.`;
 
 /**
  * Default Sharder Prompt - Combined extraction + consolidation in one step

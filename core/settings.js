@@ -87,7 +87,7 @@ export function getDefaultSettings() {
 
         // Context cleanup settings
         contextCleanup: {
-            enabled: false,               // Master toggle for context cleanup
+            enabled: true,                // Master toggle for context cleanup
             stripHtml: true,              // Remove HTML tags like <div>, <span>, etc.
             stripCodeBlocks: false,       // Remove ```code``` blocks entirely
             stripUrls: false,             // Remove http/https URLs
@@ -119,7 +119,7 @@ export function getDefaultSettings() {
         // Per-feature API configuration
         apiFeatures: {
             summary: {
-                useSillyTavernAPI: false,  // Toggle: ST API vs External
+                useSillyTavernAPI: true,   // Toggle: ST API vs External
                 apiConfigId: null,          // ID from savedApiConfigs, or null
                 connectionProfileId: null,  // ID from Connection Manager profiles, or null
                 queueDelayMs: 0,            // Delay in milliseconds between API calls
@@ -131,7 +131,7 @@ export function getDefaultSettings() {
                 removeStopStrings: false    // Remove stop strings for ST/Connection Profile generation
             },
             sharder: {
-                useSillyTavernAPI: false,
+                useSillyTavernAPI: true,
                 apiConfigId: null,
                 connectionProfileId: null,
                 queueDelayMs: 0,
@@ -143,7 +143,7 @@ export function getDefaultSettings() {
                 removeStopStrings: false
             },
             events: {
-                useSillyTavernAPI: false,
+                useSillyTavernAPI: true,
                 apiConfigId: null,
                 connectionProfileId: null,
                 queueDelayMs: 0,
