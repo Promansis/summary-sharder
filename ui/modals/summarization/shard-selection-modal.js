@@ -90,6 +90,13 @@ function updateCount(total) {
  * @returns {Promise<{confirmed:boolean, selectedShards:Array}>}
  */
 export async function openShardSelectionModal(settings) {
+    // In RAG mode, the vector store retrieves and assembles relevant chunks from all
+    // shards automatically. Consolidating shards first collapses section-level
+    // embeddings into a single blob, losing the granularity the pipeline depends on.
+    if (settings?.sharderMode === true && settings?.rag?.enabled === true) {
+        return { confirmed: true, selectedShards: [] };
+    }
+
     // Force lorebook scan for sharder shard selection regardless of output mode.
     const allItems = sortByRangeDesc(await findSavedExtractions(settings, settings?.lorebookSelection || null));
 

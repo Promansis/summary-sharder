@@ -771,6 +771,7 @@ export async function runDebugPipeline(overrides = {}) {
         scoringMethod: rag.scoringMethod || 'keyword',
         sceneExpansion: rag.sceneExpansion !== false,
     };
+    let rerankerApplied = false;
     const rollingPinState = {
         items: [],
         compactedItems: [],
@@ -978,6 +979,7 @@ export async function runDebugPipeline(overrides = {}) {
 
     working = await runStage(stages, 'reranker', working, async (input) => {
         if (!rag?.reranker?.enabled) {
+            rerankerApplied = false;
             return {
                 results: input,
                 metadata: { skipped: true },
@@ -987,6 +989,7 @@ export async function runDebugPipeline(overrides = {}) {
         const docs = input.map(item => String(item?.text || ''));
         const reranked = await rerankDocuments(queryText, docs, rag, { topK: docs.length });
         if (!reranked.success || !Array.isArray(reranked.ranked) || reranked.ranked.length === 0) {
+            rerankerApplied = false;
             return {
                 results: input,
                 metadata: {
@@ -1017,6 +1020,7 @@ export async function runDebugPipeline(overrides = {}) {
                 ordered.push(input[i]);
             }
         }
+        rerankerApplied = true;
 
         return {
             results: ordered,
@@ -1031,7 +1035,7 @@ export async function runDebugPipeline(overrides = {}) {
     }, baseMeta);
 
     working = await runStage(stages, 'topKSlice', working, async (input) => {
-        const sorted = rag?.reranker?.enabled
+        const sorted = rerankerApplied
             ? [...input]
             : [...input].sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
 
@@ -1045,7 +1049,7 @@ export async function runDebugPipeline(overrides = {}) {
             results: sliced,
             metadata: {
                 insertCount,
-                sortedBy: rag?.reranker?.enabled ? 'reranker' : 'score',
+                sortedBy: rerankerApplied ? 'reranker' : 'score',
                 prioritizedSuperseding: superseding.length,
             },
         };

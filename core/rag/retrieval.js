@@ -642,6 +642,32 @@ function capChunksPerShard(results, maxPerShard) {
 }
 
 /**
+ * Cap chunks per shard while preserving current order.
+ * Used when reranker ordering should remain primary.
+ * @param {Array<Object>} results
+ * @param {number} maxPerShard
+ * @returns {Array<Object>}
+ */
+function capChunksPerShardPreserveOrder(results, maxPerShard) {
+    if (!Array.isArray(results) || results.length === 0) return [];
+    const limit = Math.max(1, Number(maxPerShard) || 2);
+    const counts = new Map();
+    const out = [];
+
+    for (const item of results) {
+        const start = item?.metadata?.startIndex ?? item?.metadata?.startIndex ?? -1;
+        const end = item?.metadata?.endIndex ?? item?.metadata?.endIndex ?? -1;
+        const key = `${start}-${end}`;
+        const count = counts.get(key) || 0;
+        if (count >= limit) continue;
+        counts.set(key, count + 1);
+        out.push(item);
+    }
+
+    return out;
+}
+
+/**
  * Strip machine-only metadata from chunk text before LLM injection.
  * Scene codes and weight emojis have already served their purpose in the
  * RAG pipeline (scene expansion, importance scoring) and are noise for the
@@ -869,13 +895,18 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         merged = rerankMeta.results;
 
         merged = applyImportanceBoost(merged);
+        const rerankerApplied = !!rerankMeta.metadata?.applied;
 
         // Capping per shard (Standard mode only for now, sharder has its own section-based capping)
         if (!isSharder && rag.maxChunksPerShard) {
-            merged = capChunksPerShard(merged, rag.maxChunksPerShard);
+            merged = rerankerApplied
+                ? capChunksPerShardPreserveOrder(merged, rag.maxChunksPerShard)
+                : capChunksPerShard(merged, rag.maxChunksPerShard);
         }
 
-        merged.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
+        if (!rerankerApplied) {
+            merged.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
+        }
 
         // Always prioritize the latest superseding chunk to ensure it's not sliced out by the reranker/limit.
         const superseding = merged.filter(item => item?.metadata?.chunkBehavior === 'superseding');

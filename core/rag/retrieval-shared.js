@@ -139,8 +139,11 @@ export function compactRollingPinnedChunks(rollingItems, rag) {
         let freshest = -1;
         let bestScore = Number.NEGATIVE_INFINITY;
 
+        // Relationships get 2x the limit because they're important context
+        const sectionLimit = sectionType === 'relationshipShifts' ? maxItemsPerSection * 2 : maxItemsPerSection;
+
         for (const item of items) {
-            if (bodies.length >= maxItemsPerSection) break;
+            if (bodies.length >= sectionLimit) break;
 
             const body = stripLeadingSectionHeader(item?.text || '');
             if (!body) continue;
