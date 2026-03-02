@@ -92,7 +92,7 @@ export function getDefaultSettings() {
             stripCodeBlocks: false,       // Remove ```code``` blocks entirely
             stripUrls: false,             // Remove http/https URLs
             stripEmojis: false,           // Remove emoji characters
-            stripBracketedMeta: false,    // Remove [OOC], (OOC), etc.
+            stripBracketedMeta: true,    // Remove [OOC], (OOC), etc.
             stripReasoningBlocks: true,   // Remove <thinking> and <think> blocks
             stripHiddenMessages: true,    // Skip messages with is_hidden flag
             customRegex: '',              // DEPRECATED: kept for backward compatibility, migrated to customRegexes

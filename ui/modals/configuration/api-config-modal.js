@@ -8,7 +8,7 @@ import { getApiConfigs } from '../../../core/api/legacy-api-config.js';
 import { getConnectionProfiles, isConnectionManagerAvailable } from '../../../core/api/connection-profile-api.js';
 import { Popup, POPUP_TYPE } from '../../../../../../popup.js';
 import { updateApiStatusDisplays } from '../../common/api-status-state.js';
-import { createSegmentedToggle } from '../../common/index.js';
+import { createSegmentedToggle, infoHintHtml, mountInfoHints } from '../../common/index.js';
 
 /**
  * Render a single feature's API configuration tab
@@ -166,7 +166,7 @@ function renderFeatureTab(settings, feature, container) {
 
                 <div class="ss-setting-row ss-api-secondary-setting-row">
                     <div class="ss-api-option-column ${currentMode === 'external' ? '' : 'ss-disabled-section'}">
-                        <label for="${feature}-post-processing">Prompt Post-Processing:</label>
+                        <label for="${feature}-post-processing">Prompt Post-Processing: ${infoHintHtml(`${feature}-post-processing-hint`, "Transforms message roles. Use 'Strict' for APIs requiring alternating user/assistant turns (External API only).")}</label>
                         <select id="${feature}-post-processing" class="text_pole"
                                 title="Transform messages before sending to API. Only applies to External API mode."
                                 ${currentMode === 'external' ? '' : 'disabled'}>
@@ -176,20 +176,11 @@ function renderFeatureTab(settings, feature, container) {
                             <option value="strict" ${featureConfig.postProcessing === 'strict' ? 'selected' : ''}>Strict alternating</option>
                             <option value="single" ${featureConfig.postProcessing === 'single' ? 'selected' : ''}>Single user message</option>
                         </select>
-                        <p class="ss-api-option-hint">
-                            Transforms message roles before sending to the API.
-                            Use "Strict" for APIs requiring alternating user/assistant roles.
-                            Only applies when using External API.
-                        </p>
                     </div>
 
                     <div class="ss-api-option-column ss-api-message-format-column">
-                        <label for="${feature}-message-format">Message Format:</label>
+                        <label for="${feature}-message-format">Message Format: ${infoHintHtml(`${feature}-message-format-hint`, "Wraps messages in roles. 'Alternating' adds assistant turns between messages; recommended for most proxy APIs.")}</label>
                         <div id="${feature}-message-format-host"></div>
-                        <p class="ss-api-option-hint">
-                            Use "Alternating" if your API requires assistant turns between messages.
-                            Recommended for proxy APIs. Applies to ST, External, and Connection Profile modes.
-                        </p>
                     </div>
 
                     <div class="ss-api-option-column">
@@ -197,12 +188,8 @@ function renderFeatureTab(settings, feature, container) {
                             <input type="checkbox"
                                 id="${feature}-remove-stop-strings"
                                 ${featureConfig.removeStopStrings === true ? 'checked' : ''} />
-                            <span>Remove Stop Strings</span>
+                            <span>Remove Stop Strings ${infoHintHtml(`${feature}-remove-stop-strings-hint`, "Strips stop strings from requests. Enable if your API returns empty output when stop sequences are present.")}</span>
                         </label>
-                        <p class="ss-api-option-hint">
-                            Sends requests without stop strings for SillyTavern/Connection Profile modes.
-                            Useful for proxies that return empty output when stops are present.
-                        </p>
                     </div>
                 </div>
             </div>
@@ -210,6 +197,7 @@ function renderFeatureTab(settings, feature, container) {
     `;
 
     container.innerHTML = html;
+    mountInfoHints(container);
 
     // Event handlers for this tab
     const stRadio = container.querySelector(`input[name="${feature}-api-mode"][value="st"]`);
