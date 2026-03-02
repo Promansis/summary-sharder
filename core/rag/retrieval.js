@@ -609,6 +609,39 @@ async function applyReranker(results, queryText, rag) {
 }
 
 /**
+ * Cap the number of results from the same shard (same message range).
+ * Prevents a single long summary from crowding out other context.
+ * @param {Array<Object>} results
+ * @param {number} maxPerShard
+ * @returns {Array<Object>}
+ */
+function capChunksPerShard(results, maxPerShard) {
+    if (!Array.isArray(results) || results.length === 0) return [];
+    const limit = Math.max(1, Number(maxPerShard) || 2);
+
+    const grouped = new Map();
+    for (const item of results) {
+        const start = item?.metadata?.startIndex ?? item?.metadata?.startIndex ?? -1;
+        const end = item?.metadata?.endIndex ?? item?.metadata?.endIndex ?? -1;
+        const key = `${start}-${end}`;
+
+        if (!grouped.has(key)) {
+            grouped.set(key, []);
+        }
+        grouped.get(key).push(item);
+    }
+
+    const out = [];
+    for (const group of grouped.values()) {
+        // Keep the best scoring ones from this shard
+        group.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
+        out.push(...group.slice(0, limit));
+    }
+
+    return out;
+}
+
+/**
  * Strip machine-only metadata from chunk text before LLM injection.
  * Scene codes and weight emojis have already served their purpose in the
  * RAG pipeline (scene expansion, importance scoring) and are noise for the
@@ -749,6 +782,23 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
 
         let merged = dedupeResults(shardResults);
 
+        // Fallback: If non-sharder mode, ensure the latest N summaries are included
+        // to prevent recent context from being lost if it doesn't match query keywords.
+        if (!isSharder) {
+            try {
+                const { items: latestItems } = await listChunks(collectionId, rag, {
+                    limit: Math.max(1, Number(rag.insertCount) || 5),
+                });
+                if (Array.isArray(latestItems) && latestItems.length > 0) {
+                    // Sort by endIndex descending to get truly latest
+                    latestItems.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
+                    merged = dedupeResults([...merged, ...latestItems]);
+                }
+            } catch (error) {
+                console.warn(`${LOG_PREFIX} Standard mode latest-fallback fetch failed:`, error?.message || error);
+            }
+        }
+
         if (useClientHybrid) {
             merged = runClientHybridFusion(merged, queryText, rag);
             merged = keywordBoost(merged, queryText);
@@ -819,16 +869,42 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         merged = rerankMeta.results;
 
         merged = applyImportanceBoost(merged);
+
+        // Capping per shard (Standard mode only for now, sharder has its own section-based capping)
+        if (!isSharder && rag.maxChunksPerShard) {
+            merged = capChunksPerShard(merged, rag.maxChunksPerShard);
+        }
+
         merged.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
 
         // Always prioritize the latest superseding chunk to ensure it's not sliced out by the reranker/limit.
         const superseding = merged.filter(item => item?.metadata?.chunkBehavior === 'superseding');
         const others = merged.filter(item => item?.metadata?.chunkBehavior !== 'superseding');
         const insertCount = Math.max(1, Number(rag.insertCount) || 5);
-        merged = [...superseding, ...others].slice(0, insertCount);
 
-        // Scene grouping only applies to Sharder Mode
-        merged = isSharder ? orderWithSceneGrouping(merged) : merged;
+        // Two-tier slicing for Standard mode: Recent + Relevant
+        if (!isSharder) {
+            const recentCount = Math.min(insertCount, Number(rag.recentSummaryCount) || 0);
+            if (recentCount > 0) {
+                // Find potential recent summaries (highest endIndex)
+                const candidates = [...merged].sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
+                const recent = candidates.slice(0, recentCount);
+                const recentHashes = new Set(recent.map(r => r.hash || r.text));
+                
+                // Fill remaining slots with the best remaining relevance results
+                const remainingCount = insertCount - recent.length;
+                const relevant = merged.filter(m => !recentHashes.has(m.hash || m.text)).slice(0, remainingCount);
+                
+                merged = [...recent, ...relevant];
+            } else {
+                merged = [...superseding, ...others].slice(0, insertCount);
+            }
+        } else {
+            merged = [...superseding, ...others].slice(0, insertCount);
+        }
+
+        // Final sorting: Scene grouping for Sharder, Chronological for Standard
+        merged = isSharder ? orderWithSceneGrouping(merged) : merged.sort(compareChronologically);
 
         if (isSharder && (rollingPinnedCompacted.length > 0 || anchorsPinnedCompacted.length > 0 || developmentsPinnedCompacted.length > 0)) {
             let mergedShaped = merged;

@@ -4,6 +4,7 @@
  */
 
 import { tokenizeAndStem } from './stemmer.js';
+import { getFreshnessEndIndex } from './retrieval-shared.js';
 
 const LOG_PREFIX = '[SummarySharder:RAG]';
 
@@ -232,6 +233,38 @@ export function runClientHybridFusion(results, queryText, rag = {}) {
     return fuseRrf(vectorRanked, bm25Ranked, rag?.hybridRrfK);
 }
 
+/**
+ * Apply recency freshness boost to RAG results.
+ * Chunks closer to the end of the chat (higher endIndex) receive a score boost.
+ * @param {Array<Object>} results
+ * @param {Object} rag
+ * @returns {Array<Object>}
+ */
+export function applyFreshnessBoost(results, rag) {
+    if (!Array.isArray(results) || results.length === 0) return [];
+    const weight = Number(rag?.recencyFreshnessWeight);
+    if (!Number.isFinite(weight) || weight <= 0) return results;
+
+    const chat = SillyTavern.getContext()?.chat || [];
+    const chatLength = Math.max(1, chat.length);
+
+    return results.map(item => {
+        const endIndex = getFreshnessEndIndex(item);
+        if (endIndex < 0) return item;
+
+        // freshnessBoost = (endIndex / chatLength) * freshnessWeight
+        const boost = (endIndex / chatLength) * weight;
+        const base = Number(item?.score) || 0;
+
+        return {
+            ...item,
+            score: base + boost,
+            _baseScore: item._baseScore ?? base,
+            _freshnessBoost: boost,
+        };
+    });
+}
+
 export function scoreAndRank(results, queryText, settings) {
     if (!Array.isArray(results) || results.length === 0) return [];
 
@@ -248,6 +281,7 @@ export function scoreAndRank(results, queryText, settings) {
         scored = keywordBoost(results, queryText);
     }
 
+    scored = applyFreshnessBoost(scored, rag);
     scored = sortByScore(scored);
 
     console.debug(`${LOG_PREFIX} scoreAndRank complete`, {

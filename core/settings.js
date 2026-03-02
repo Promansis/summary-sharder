@@ -218,6 +218,9 @@ export function getDefaultSettings() {
             template: 'Recalled memories:\n{{text}}',
             injectionMode: 'extension_prompt', // 'extension_prompt' | 'variable'
             injectionVariableName: 'ss_rag_memory',
+            recencyFreshnessWeight: 0.1,
+            recentSummaryCount: 1,
+            maxChunksPerShard: 2,
             // Scene Expansion
             sceneExpansion: true,
             maxSceneExpansionChunks: 10,
@@ -273,6 +276,9 @@ export function getDefaultSettings() {
             template: 'Recalled memories:\n{{text}}',
             injectionMode: 'extension_prompt', // 'extension_prompt' | 'variable'
             injectionVariableName: 'ss_rag_memory',
+            recencyFreshnessWeight: 0.1,
+            recentSummaryCount: 1,
+            maxChunksPerShard: 2,
             // Re-ranker
             reranker: {
                 enabled: false,

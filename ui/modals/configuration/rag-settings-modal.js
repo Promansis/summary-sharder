@@ -390,6 +390,20 @@ function renderModalHtml(rag, isSharder) {
                             <label for="ss-rag-threshold">Score Threshold ${infoHintHtml('ss-rag-score-threshold-hint', 'Minimum relevance score a chunk must meet to be included (0-1). Higher = stricter.')}</label>
                             <div id="ss-rag-threshold-host"></div>
                         </div>
+                        ${!isSharder ? `
+                        <div class="ss-block">
+                            <label for="ss-rag-freshness">Recency Freshness Weight ${infoHintHtml('ss-rag-freshness-weight-hint', 'Gives a small score boost to the most recent summaries (0-1). Prevents context loss for non-sharder mode.')}</label>
+                            <div id="ss-rag-freshness-host"></div>
+                        </div>
+                        <div class="ss-block">
+                            <label for="ss-rag-recent-count">Recent Summary Count ${infoHintHtml('ss-rag-recent-count-hint', 'Number of most-recent summaries to always include, regardless of relevance score.')}</label>
+                            <input id="ss-rag-recent-count" class="text_pole ss-rag-control" type="number" min="0" value="${rag.recentSummaryCount ?? 1}" />
+                        </div>
+                        <div class="ss-block">
+                            <label for="ss-rag-max-chunks-per-shard">Max Chunks per Shard ${infoHintHtml('ss-rag-max-chunks-per-shard-hint', 'Cap paragraphs from the same summary to prevent one long entry from crowding out others.')}</label>
+                            <input id="ss-rag-max-chunks-per-shard" class="text_pole ss-rag-control" type="number" min="1" value="${rag.maxChunksPerShard ?? 2}" />
+                        </div>
+                        ` : ''}
                     </div>
 
                     <div class="ss-rag-grid-two">
@@ -808,6 +822,9 @@ function readRagDraft(base, isSharder) {
     draft.protectCount = Math.max(0, toInt(document.getElementById('ss-rag-protect-count')?.value, 5));
     draft.maxItemsPerCompactedSection = Math.max(1, toInt(document.getElementById('ss-rag-max-items')?.value, 5));
     draft.scoreThreshold = Math.min(1, Math.max(0, toFloat(document.getElementById('ss-rag-threshold')?.value, 0.25)));
+    draft.recencyFreshnessWeight = Math.min(1, Math.max(0, toFloat(document.getElementById('ss-rag-freshness')?.value, 0.1)));
+    draft.recentSummaryCount = Math.max(0, toInt(document.getElementById('ss-rag-recent-count')?.value, 1));
+    draft.maxChunksPerShard = Math.max(1, toInt(document.getElementById('ss-rag-max-chunks-per-shard')?.value, 2));
     draft.position = toInt(document.getElementById('ss-rag-position')?.value, 0);
     draft.depth = Math.max(0, toInt(document.getElementById('ss-rag-depth')?.value, 2));
     draft.template = document.getElementById('ss-rag-template')?.value || 'Recalled memories:\n{{text}}';
@@ -880,6 +897,7 @@ function updateDomFromDraft(draft, isSharder) {
     setValue('ss-rag-protect-count', draft.protectCount ?? 5);
     setValue('ss-rag-max-items', draft.maxItemsPerCompactedSection ?? 5);
     setRangePairValue('ss-rag-threshold', draft.scoreThreshold ?? 0.25);
+    setRangePairValue('ss-rag-freshness', draft.recencyFreshnessWeight ?? 0.1);
     setValue('ss-rag-position', draft.position ?? 0);
     setValue('ss-rag-depth', draft.depth ?? 2);
     setValue('ss-rag-template', draft.template || 'Recalled memories:\n{{text}}');
@@ -1294,6 +1312,7 @@ export async function openRagSettingsModal(settings) {
         };
 
         mountRangePair('ss-rag-threshold-host', 'ss-rag-threshold', 0, 1, 0.01, rag.scoreThreshold ?? 0.25);
+        mountRangePair('ss-rag-freshness-host', 'ss-rag-freshness', 0, 1, 0.01, rag.recencyFreshnessWeight ?? 0.1);
         mountRangePair('ss-rag-scene-max-host', 'ss-rag-scene-max', 1, 25, 1, rag.maxSceneExpansionChunks ?? 10);
         const normalizedWeights = normalizeHybridWeights(rag.hybridAlpha ?? HYBRID_WEIGHT_DEFAULT_ALPHA, rag.hybridBeta ?? HYBRID_WEIGHT_DEFAULT_BETA);
         mountHybridWeightSlider('ss-rag-hybrid-weight-host', 'ss-rag-hybrid-weight', normalizedWeights.beta);
