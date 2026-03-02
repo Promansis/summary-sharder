@@ -418,7 +418,9 @@ async function runSummarizationFromModal(sourceCharId, sourceChatFile, messages,
  * @param {number|null} customPosition - Custom position index (when injectionPosition is 'custom')
  */
 async function injectIntoCurrentChat(summary, startIndex, endIndex, injectionPosition = 'end', customPosition = null) {
-    const formattedContent = `[MEMORY SHARD: Messages ${startIndex}-${endIndex}]\n\n${summary}`;
+    const isSharder = getSettings()?.sharderMode === true;
+    const tag = isSharder ? 'MEMORY SHARD' : 'SUMMARY';
+    const formattedContent = `[${tag}: Messages ${startIndex}-${endIndex}]\n\n${summary}`;
     const context = SillyTavern.getContext();
 
     if (!context || !context.chat) {
@@ -530,8 +532,10 @@ async function saveToLorebookFromModal(summary, startIndex, endIndex, settings, 
     const context = SillyTavern.getContext();
     const charName = context?.name2 || 'Character';
     const date = new Date().toISOString().split('T')[0];
+    const isSharderForLorebook = settings?.sharderMode === true;
+    const defaultNameFormat = isSharderForLorebook ? 'Memory Shard {start}-{end}' : 'Summary {start}-{end}';
 
-    const entryName = (options.nameFormat || 'Memory Shard {start}-{end}')
+    const entryName = (options.nameFormat || defaultNameFormat)
         .replace(/{start}/g, startIndex)
         .replace(/{end}/g, endIndex)
         .replace(/{date}/g, date)
@@ -542,7 +546,7 @@ async function saveToLorebookFromModal(summary, startIndex, endIndex, settings, 
         const keywordFormat = options.keywordFormat || 'summary_{start}_{end}';
         keywords.push(keywordFormat.replace(/{start}/g, startIndex).replace(/{end}/g, endIndex));
     }
-    keywords.push('memory_shard');
+    keywords.push(isSharderForLorebook ? 'memory_shard' : 'summary');
     if (options.additionalKeywords) {
         keywords.push(...options.additionalKeywords.split(',').map(k => k.trim()).filter(k => k));
     }
@@ -623,7 +627,9 @@ async function injectIntoSpecificChat(summary, startIndex, endIndex, targetCharI
         chatData = await loadChatContent(targetCharId, targetChatFile);
 
         // Create system message
-        const formattedContent = `[MEMORY SHARD: Messages ${startIndex}-${endIndex}]\n\n${summary}`;
+        const isSharder = getSettings()?.sharderMode === true;
+        const tag = isSharder ? 'MEMORY SHARD' : 'SUMMARY';
+        const formattedContent = `[${tag}: Messages ${startIndex}-${endIndex}]\n\n${summary}`;
         systemMessage = getSystemMessageByType('generic', formattedContent);
 
         if (!systemMessage) {

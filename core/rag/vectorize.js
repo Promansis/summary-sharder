@@ -71,7 +71,7 @@ async function listAllChunks(collectionId, ragSettings) {
 }
 
 /**
- * Parse a saved chat memory shard format.
+ * Parse a saved chat memory shard format (Sharder Mode: [MEMORY SHARD: Messages X-Y]).
  * @param {string} text
  * @returns {{startIndex: number, endIndex: number, body: string}|null}
  */
@@ -85,6 +85,33 @@ function parseMemoryShard(text) {
         endIndex: parseInt(match[2], 10),
         body: String(match[3] || '').trim(),
     };
+}
+
+/**
+ * Parse a saved standard-mode summary ([SUMMARY: Messages X-Y]).
+ * @param {string} text
+ * @returns {{startIndex: number, endIndex: number, body: string}|null}
+ */
+function parseStandardSummary(text) {
+    const raw = String(text || '');
+    const match = raw.match(/^\[SUMMARY:\s*Messages\s*(\d+)\s*[-–]\s*(\d+)\]\s*\n\n([\s\S]*)$/i);
+    if (!match) return null;
+
+    return {
+        startIndex: parseInt(match[1], 10),
+        endIndex: parseInt(match[2], 10),
+        body: String(match[3] || '').trim(),
+    };
+}
+
+/**
+ * Try to parse any extension-managed summary message, regardless of mode.
+ * Tries [SUMMARY:] first, then [MEMORY SHARD:] for backward compatibility.
+ * @param {string} text
+ * @returns {{startIndex: number, endIndex: number, body: string}|null}
+ */
+function parseAnySummaryMessage(text) {
+    return parseStandardSummary(text) || parseMemoryShard(text);
 }
 
 /**
@@ -709,9 +736,10 @@ async function collectStandardShards(settings) {
     const ragStd = settings?.ragStandard;
     const results = [];
 
+    // Scan chat system messages for [SUMMARY: ...] or [MEMORY SHARD: ...] prefixes.
     const chat = SillyTavern.getContext()?.chat || [];
     for (const msg of chat) {
-        const parsed = parseMemoryShard(msg?.mes);
+        const parsed = parseAnySummaryMessage(msg?.mes);
         if (!parsed) continue;
         results.push({
             text: parsed.body,
@@ -735,7 +763,9 @@ async function collectStandardShards(settings) {
                 for (const entry of entries) {
                     const content = String(entry?.content || entry?.memo || '').trim();
                     if (!content) continue;
-                    const parsed = parseMemoryShard(content);
+
+                    // Primary: content has an embedded [SUMMARY: ...] or [MEMORY SHARD: ...] header.
+                    const parsed = parseAnySummaryMessage(content);
                     if (parsed) {
                         results.push({
                             text: parsed.body,
@@ -744,6 +774,24 @@ async function collectStandardShards(settings) {
                             keywords: Array.isArray(entry?.key) && entry.key.length > 0
                                 ? entry.key
                                 : extractKeywordsTfIdf(parsed.body),
+                        });
+                        continue;
+                    }
+
+                    // Secondary: identify entries by comment matching "Summary N-N" or
+                    // "Memory Shard N-N" (the old default name format).
+                    const comment = String(entry?.comment || '');
+                    const rangeMatch = comment.match(/(?:summary|memory\s+shard)\s+(\d+)\s*[-–]\s*(\d+)/i);
+                    if (rangeMatch) {
+                        const startIndex = parseInt(rangeMatch[1], 10);
+                        const endIndex = parseInt(rangeMatch[2], 10);
+                        results.push({
+                            text: content,
+                            startIndex,
+                            endIndex,
+                            keywords: Array.isArray(entry?.key) && entry.key.length > 0
+                                ? entry.key
+                                : extractKeywordsTfIdf(content),
                         });
                     }
                 }

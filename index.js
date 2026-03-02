@@ -209,7 +209,7 @@ function shouldQualifyAutoMessage(messageId, messageType, sourceEventType, chat)
     }
 
     const messageText = typeof msg.mes === 'string' ? msg.mes.trimStart() : '';
-    if (messageText.startsWith('[MEMORY SHARD:')) {
+    if (messageText.startsWith('[MEMORY SHARD:') || messageText.startsWith('[SUMMARY:')) {
         return false;
     }
 

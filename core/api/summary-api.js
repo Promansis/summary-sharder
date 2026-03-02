@@ -165,7 +165,7 @@ function isFirstSummaryForChat() {
 
     // Check if any summary messages exist in current chat
     const hasSummary = chat.some(msg =>
-        msg.mes && msg.mes.includes('[MEMORY SHARD:')
+        msg.mes && (msg.mes.includes('[MEMORY SHARD:') || msg.mes.includes('[SUMMARY:'))
     );
 
     return !hasSummary;

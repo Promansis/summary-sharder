@@ -6,7 +6,6 @@ export const MESSAGES_CSS = `
     box-shadow: var(--ss-shadow-lg) !important;
     max-height: 300px;
     overflow: hidden;
-    z-index: 1000;
     flex-direction: column;
 }
 

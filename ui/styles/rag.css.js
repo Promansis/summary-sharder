@@ -7,6 +7,7 @@ export const RAG_CSS = `
     padding: 14px;
     max-height: 76vh;
     overflow-y: auto;
+    overflow-x: visible;
 }
 
 .ss-rag-title {
@@ -88,6 +89,8 @@ export const RAG_CSS = `
 .ss-rag-accordion {
     border-radius: 8px;
     margin-bottom: 12px;
+    overflow: visible;
+    z-index: 0;
 }
 
 .ss-rag-accordion .ss-accordion-header {
@@ -102,6 +105,8 @@ export const RAG_CSS = `
     max-height: none;
     overflow-y: visible;
     padding: 10px;
+    z-index: 1001;
+    position: relative;
 }
 
 .ss-rag-accordion[data-rag-section="backend"] .ss-accordion-content {
@@ -270,6 +275,8 @@ export const RAG_CSS = `
 
 .ss-rag-vectorization-lorebook-options {
     margin-top: 8px;
+    position: relative;
+    z-index: 1001;
 }
 
 #ss-rag-reranker-mode-host,

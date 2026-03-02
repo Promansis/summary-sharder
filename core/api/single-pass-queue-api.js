@@ -98,7 +98,7 @@ function reconcileDomMesidsAfterBatch(systemInsertionIndices = []) {
 
         const text = el.querySelector('.mes_text')?.textContent || '';
         const isInsertedSummary = el.getAttribute('data-ss-batch-summary') === '1'
-            || (systemInsertionSet.has(currentMesid) && text.includes('[MEMORY SHARD: Messages '));
+            || (systemInsertionSet.has(currentMesid) && (text.includes('[MEMORY SHARD: Messages ') || text.includes('[SUMMARY: Messages ')));
 
         // Newly inserted summary rows are already in shifted coordinates.
         if (isInsertedSummary) {
@@ -147,7 +147,8 @@ function reconcileDomMesidsAfterBatch(systemInsertionIndices = []) {
             const keepEl = els.find((el) => {
                 const text = el.querySelector('.mes_text')?.textContent || '';
                 return el.getAttribute('data-ss-batch-summary') === '1'
-                    || text.includes('[MEMORY SHARD: Messages ');
+                    || text.includes('[MEMORY SHARD: Messages ')
+                    || text.includes('[SUMMARY: Messages ');
             }) || els[0];
 
             for (const el of els) {

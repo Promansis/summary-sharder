@@ -9,6 +9,14 @@ export const DROPDOWNS_CSS = `
 [class*="ss-"][class*="-dropdown-container"] {
     position: relative;
     width: 100%;
+    z-index: 1001;
+    isolation: isolate;
+}
+
+.ss-block [class*="-dropdown-container"],
+.ss-block [class*="-dropdown-options"] {
+    z-index: 1001 !important;
+    position: relative !important;
 }
 
 .ss-dropdown-trigger {
@@ -49,4 +57,5 @@ export const DROPDOWNS_CSS = `
     top: 100%;
     left: 0;
     right: 0;
+    z-index: 1001;
 `;

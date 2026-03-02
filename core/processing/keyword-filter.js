@@ -25,6 +25,11 @@ export function parseBannedKeywords(bannedStr) {
  * @returns {string[]}
  */
 export function filterBannedKeywords(keywords, bannedSet) {
-    if (!bannedSet || bannedSet.size === 0) return keywords;
-    return keywords.filter(k => !bannedSet.has(k.toLowerCase()));
+    const list = Array.isArray(keywords) ? keywords : [];
+
+    // Always return a new array. Some callers clear/mutate their input array after
+    // filtering; returning the same reference would accidentally wipe results.
+    if (!bannedSet || bannedSet.size === 0) return [...list];
+
+    return list.filter(k => !bannedSet.has(String(k).toLowerCase()));
 }

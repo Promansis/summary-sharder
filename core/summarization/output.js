@@ -65,8 +65,9 @@ export async function handleSummaryResult(
     const shouldInjectToContext = resolvedArchiveOptions.injectToContext !== false;
 
     if (shouldInjectToContext) {
+        const isSharder = settings?.sharderMode === true;
         if (mode === 'system') {
-            const systemResult = await insertSystemMessage(summary, startIndex, endIndex, insertAfterUID, options);
+            const systemResult = await insertSystemMessage(summary, startIndex, endIndex, insertAfterUID, options, isSharder);
             didInjectToContext = systemResult.didInjectToContext;
             outputUID = systemResult.outputUID;
         } else {
@@ -148,10 +149,12 @@ export async function handleSummaryResult(
  * @param {number} endIndex - Original end message index (for labeling and fallback positioning)
  * @param {string|null} insertAfterUID - UID (send_date) of message to insert after
  * @param {{skipDomMesidUpdate?: boolean}|null} options
+ * @param {boolean} isSharder - Whether this is a Sharder Mode summary
  * @returns {Promise<{didInjectToContext: boolean, outputUID: string|null}>}
  */
-async function insertSystemMessage(content, startIndex, endIndex, insertAfterUID = null, options = null) {
-    const formattedContent = `[MEMORY SHARD: Messages ${startIndex}-${endIndex}]
+async function insertSystemMessage(content, startIndex, endIndex, insertAfterUID = null, options = null, isSharder = false) {
+    const tag = isSharder ? 'MEMORY SHARD' : 'SUMMARY';
+    const formattedContent = `[${tag}: Messages ${startIndex}-${endIndex}]
 
 ${content}`;
 
@@ -228,7 +231,7 @@ ${content}`;
     // In batch mode we reconcile mesids later; tag the inserted summary element so
     // reconciliation can skip only the true inserted row, not every row sharing mesid.
     if (options?.skipDomMesidUpdate === true) {
-        const summaryHeader = `[MEMORY SHARD: Messages ${startIndex}-${endIndex}]`;
+        const summaryHeader = `[${isSharder ? 'MEMORY SHARD' : 'SUMMARY'}: Messages ${startIndex}-${endIndex}]`;
         const candidates = document.querySelectorAll(`#chat .mes[mesid="${insertionIndex}"]`);
         for (const el of candidates) {
             const text = el.querySelector('.mes_text')?.textContent || '';
@@ -470,8 +473,9 @@ async function saveToLorebook(summaryText, startIndex, endIndex, settings, extra
 
     // Get entry configuration from settings
     const options = settings.lorebookEntryOptions || {};
+    const defaultNameFormat = settings?.sharderMode === true ? 'Memory Shard {start}-{end}' : 'Summary {start}-{end}';
     const entryName = formatEntryName(
-        options.nameFormat || 'Memory Shard {start}-{end}',
+        options.nameFormat || defaultNameFormat,
         startIndex,
         endIndex
     );
