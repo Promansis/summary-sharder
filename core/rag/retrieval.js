@@ -49,6 +49,582 @@ function getFreshnessEndIndex(item) {
 }
 
 /**
+ * @param {Object} item
+ * @returns {string}
+ */
+function getRollingKey(item) {
+    const sectionType = String(item?.metadata?.sectionType || '');
+    const entityKey = String(item?.metadata?.entityKey || '');
+    if (!sectionType || !entityKey) return '';
+    return `${sectionType}|${entityKey}`;
+}
+
+/**
+ * Keep the freshest rolling chunk for each sectionType|entityKey key.
+ * @param {Array<Object>} items
+ * @returns {Array<Object>}
+ */
+function dedupeLatestRolling(items) {
+    const latestRolling = new Map();
+
+    for (const item of (items || [])) {
+        if (item?.metadata?.chunkBehavior !== 'rolling') continue;
+        const rollingKey = getRollingKey(item);
+        if (!rollingKey) continue;
+
+        const existing = latestRolling.get(rollingKey);
+        if (!existing || getFreshnessEndIndex(item) > getFreshnessEndIndex(existing)) {
+            latestRolling.set(rollingKey, item);
+        }
+    }
+
+    return [...latestRolling.values()];
+}
+
+/**
+ * Merge query-derived and fallback rolling chunks, then dedupe by latest freshness.
+ * Query items are traversed first so their key order is preserved for pinned output.
+ * @param {Array<Object>} queryRolling
+ * @param {Array<Object>} fallbackRolling
+ * @returns {Array<Object>}
+ */
+function mergeLatestRolling(queryRolling, fallbackRolling) {
+    return dedupeLatestRolling([...(queryRolling || []), ...(fallbackRolling || [])]);
+}
+
+const ROLLING_SECTION_ORDER = ['relationshipShifts', 'callbacks', 'looseThreads'];
+const ROLLING_SECTION_LABELS = {
+    relationshipShifts: 'RELATIONSHIPS',
+    callbacks: 'CALLBACKS',
+    looseThreads: 'THREADS',
+};
+const ANCHORS_SECTION_KEY = 'anchors';
+const ANCHORS_SECTION_LABEL = 'ANCHORS';
+const DEVELOPMENTS_SECTION_KEY = 'developments';
+const DEVELOPMENTS_SECTION_LABEL = 'DEVELOPMENTS';
+
+const CUMULATIVE_SECTION_ORDER = ['events', 'scenes', 'keyDialogue', 'characterStates', 'sceneBreaks', 'nsfwContent'];
+const PINNED_TIER_ORDER = ['developments', 'anchors', 'relationshipShifts', 'callbacks', 'looseThreads'];
+
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+function stripLeadingSectionHeader(text) {
+    const input = String(text || '').trim();
+    if (!input) return '';
+    const lines = input.split('\n');
+    if (lines.length > 1 && /^###\s+/.test(String(lines[0] || '').trim())) {
+        return lines.slice(1).join('\n').trim();
+    }
+    return input;
+}
+
+/**
+ * Compact many per-entity rolling chunks into at most one chunk per rolling section.
+ * Keeps full key coverage while avoiding repeated section headers in injection text.
+ * @param {Array<Object>} rollingItems
+ * @param {Object} [rag]
+ * @returns {Array<Object>}
+ */
+function compactRollingPinnedChunks(rollingItems, rag) {
+    const grouped = new Map();
+
+    const maxItemsPerSection = Number(rag?.maxItemsPerCompactedSection) || 5;
+
+    for (const item of (rollingItems || [])) {
+        if (item?.metadata?.chunkBehavior !== 'rolling') continue;
+        const rollingKey = getRollingKey(item);
+        if (!rollingKey) continue;
+        const sectionType = String(item?.metadata?.sectionType || '');
+        if (!sectionType) continue;
+        if (!grouped.has(sectionType)) {
+            grouped.set(sectionType, []);
+        }
+        grouped.get(sectionType).push(item);
+    }
+
+    const sectionTypes = [
+        ...ROLLING_SECTION_ORDER.filter(section => grouped.has(section)),
+        ...[...grouped.keys()].filter(section => !ROLLING_SECTION_ORDER.includes(section)),
+    ];
+
+    const out = [];
+    for (const sectionType of sectionTypes) {
+        const items = grouped.get(sectionType) || [];
+        if (items.length === 0) continue;
+
+        items.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
+        const seenBodies = new Set();
+        const bodies = [];
+        let freshest = -1;
+        let bestScore = Number.NEGATIVE_INFINITY;
+
+        for (const item of items) {
+            if (bodies.length >= maxItemsPerSection) break;
+
+            const body = stripLeadingSectionHeader(item?.text || '');
+            if (!body) continue;
+            const normalizedBody = normalizeText(body);
+            if (!normalizedBody || seenBodies.has(normalizedBody)) continue;
+            seenBodies.add(normalizedBody);
+            bodies.push(body);
+            freshest = Math.max(freshest, getFreshnessEndIndex(item));
+            bestScore = Math.max(bestScore, Number(item?.score) || 0);
+        }
+
+        if (bodies.length === 0) continue;
+
+        const heading = ROLLING_SECTION_LABELS[sectionType] || String(sectionType || '').toUpperCase();
+        out.push({
+            text: `### ${heading}\n${bodies.join('\n')}`.trim(),
+            hash: `rolling-group|${sectionType}|${freshest}|${bodies.length}`,
+            score: Number.isFinite(bestScore) ? bestScore : 0,
+            metadata: {
+                chunkBehavior: 'rolling',
+                sectionType,
+                sectionTypes: [sectionType],
+                entityKey: '__pinned_group__',
+                freshnessEndIndex: freshest,
+                pinnedGroup: true,
+                pinnedGroupCount: bodies.length,
+            },
+        });
+    }
+
+    return out;
+}
+
+/**
+ * @param {string} text
+ * @param {string} headingName
+ * @returns {string}
+ */
+function extractSectionBodyByHeading(text, headingName) {
+    const lines = String(text || '').split('\n');
+    const target = String(headingName || '').trim().toUpperCase();
+    let inTarget = false;
+    const buffer = [];
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || '');
+        const header = line.match(/^###\s+(.+?)\s*$/);
+        if (header) {
+            const headerName = String(header[1] || '').trim().toUpperCase();
+            if (inTarget && headerName !== target) break;
+            inTarget = headerName === target;
+            continue;
+        }
+        if (inTarget) {
+            buffer.push(line);
+        }
+    }
+
+    return buffer.join('\n').trim();
+}
+
+/**
+ * @param {string} sectionText
+ * @returns {Array<string>}
+ */
+function splitSectionListItems(sectionText) {
+    const input = String(sectionText || '').trim();
+    if (!input) return [];
+
+    const lines = input.split('\n');
+    const items = [];
+    let current = '';
+
+    const flush = () => {
+        const value = String(current || '').trim();
+        if (value) items.push(value);
+        current = '';
+    };
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || '').trim();
+        if (!line) continue;
+
+        if (/^[-*•]\s+/.test(line)) {
+            flush();
+            current = line;
+        } else if (!current) {
+            current = line;
+        } else {
+            current += ` ${line}`;
+        }
+    }
+
+    flush();
+    return items;
+}
+
+/**
+ * @param {string} itemText
+ * @returns {string}
+ */
+function getAnchorKey(itemText) {
+    const text = String(itemText || '')
+        .replace(/^[-*•]\s+/, '')
+        .trim();
+    if (!text) return '';
+    return String(text.split('|')[0] || '').trim().toLowerCase();
+}
+
+/**
+ * Extract latest anchors by anchor key from candidate chunks.
+ * @param {Array<Object>} items
+ * @returns {Array<{key: string, text: string, freshness: number, score: number}>}
+ */
+function collectLatestAnchors(items) {
+    const latest = new Map();
+
+    for (const item of (items || [])) {
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasAnchors = sectionTypes.includes(ANCHORS_SECTION_KEY)
+            || /(^|\n)###\s+ANCHORS\b/i.test(String(item?.text || ''));
+        if (!likelyHasAnchors) continue;
+
+        const sectionBody = extractSectionBodyByHeading(item?.text || '', ANCHORS_SECTION_LABEL);
+        if (!sectionBody) continue;
+
+        const entries = splitSectionListItems(sectionBody);
+        for (const entry of entries) {
+            const key = getAnchorKey(entry);
+            if (!key) continue;
+
+            const normalized = String(entry || '').trim();
+            if (!normalized) continue;
+            const freshness = getFreshnessEndIndex(item);
+            const score = Number(item?.score) || 0;
+            const value = {
+                key,
+                text: /^[-*•]\s+/.test(normalized) ? normalized : `- ${normalized}`,
+                freshness,
+                score,
+            };
+
+            const existing = latest.get(key);
+            if (!existing || freshness > existing.freshness) {
+                latest.set(key, value);
+            }
+        }
+    }
+
+    return [...latest.values()];
+}
+
+/**
+ * @param {Array<{key: string, text: string, freshness: number, score: number}>} queryAnchors
+ * @param {Array<{key: string, text: string, freshness: number, score: number}>} fallbackAnchors
+ * @returns {Array<{key: string, text: string, freshness: number, score: number}>}
+ */
+function mergeLatestAnchors(queryAnchors, fallbackAnchors) {
+    const latest = new Map();
+    for (const entry of [...(queryAnchors || []), ...(fallbackAnchors || [])]) {
+        const key = String(entry?.key || '').trim();
+        if (!key) continue;
+        const freshness = Number(entry?.freshness);
+        const existing = latest.get(key);
+        if (!existing || freshness > Number(existing?.freshness)) {
+            latest.set(key, entry);
+        }
+    }
+    return [...latest.values()];
+}
+
+/**
+ * @param {Array<{key: string, text: string, freshness: number, score: number}>} anchorEntries
+ * @returns {Array<Object>}
+ */
+/**
+ * Compact multiple anchor chunks into a single block.
+ * @param {Array<Object>} anchorEntries
+ * @param {Object} [rag]
+ * @returns {Array<Object>}
+ */
+function compactAnchorsPinnedChunks(anchorEntries, rag) {
+    const safeEntries = Array.isArray(anchorEntries) ? anchorEntries : [];
+    if (safeEntries.length === 0) return [];
+
+    const maxAnchors = Number(rag?.maxItemsPerCompactedSection) || 5;
+
+    safeEntries.sort((a, b) => Number(b?.freshness || -1) - Number(a?.freshness || -1));
+
+    const lines = [];
+    const seen = new Set();
+    let freshest = -1;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const entry of safeEntries) {
+        if (lines.length >= maxAnchors) break;
+
+        const line = String(entry?.text || '').trim();
+        if (!line) continue;
+        const normalized = normalizeText(line);
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        lines.push(line);
+        freshest = Math.max(freshest, Number(entry?.freshness || -1));
+        bestScore = Math.max(bestScore, Number(entry?.score) || 0);
+    }
+
+    if (lines.length === 0) return [];
+
+    return [{
+        text: `### ${ANCHORS_SECTION_LABEL}\n${lines.join('\n')}`.trim(),
+        hash: `anchors-group|${freshest}|${lines.length}`,
+        score: Number.isFinite(bestScore) ? bestScore : 0,
+        metadata: {
+            chunkBehavior: 'cumulative',
+            sectionType: ANCHORS_SECTION_KEY,
+            sectionTypes: [ANCHORS_SECTION_KEY],
+            entityKey: '__pinned_group__',
+            freshnessEndIndex: freshest,
+            pinnedGroup: true,
+            pinnedGroupCount: lines.length,
+        },
+    }];
+}
+
+/**
+ * @param {string} text
+ * @param {string} headingName
+ * @returns {{text: string, removed: boolean}}
+ */
+function stripSectionByHeading(text, headingName) {
+    const lines = String(text || '').split('\n');
+    const target = String(headingName || '').trim().toUpperCase();
+    const kept = [];
+    let skipping = false;
+    let removed = false;
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || '');
+        const header = line.match(/^###\s+(.+?)\s*$/);
+        if (header) {
+            const headerName = String(header[1] || '').trim().toUpperCase();
+            skipping = headerName === target;
+            if (skipping) {
+                removed = true;
+                continue;
+            }
+            kept.push(line);
+            continue;
+        }
+
+        if (!skipping) {
+            kept.push(line);
+        }
+    }
+
+    return {
+        text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
+        removed,
+    };
+}
+
+/**
+ * Remove ANCHORS section blocks from cumulative chunks so compact pinned anchors
+ * can be appended once without duplicating the same section repeatedly.
+ * @param {Array<Object>} results
+ * @returns {Array<Object>}
+ */
+function stripAnchorsFromCumulativeResults(results) {
+    const out = [];
+
+    for (const item of (results || [])) {
+        if (item?.metadata?.chunkBehavior !== 'cumulative') {
+            out.push(item);
+            continue;
+        }
+
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasAnchors = sectionTypes.includes(ANCHORS_SECTION_KEY)
+            || /(^|\n)###\s+ANCHORS\b/i.test(String(item?.text || ''));
+        if (!likelyHasAnchors) {
+            out.push(item);
+            continue;
+        }
+
+        const stripped = stripSectionByHeading(item?.text || '', ANCHORS_SECTION_LABEL);
+        if (!stripped.removed) {
+            out.push(item);
+            continue;
+        }
+
+        if (!stripped.text) continue;
+        const nextSectionTypes = sectionTypes.length > 0
+            ? sectionTypes.filter(section => section !== ANCHORS_SECTION_KEY)
+            : sectionTypes;
+
+        out.push({
+            ...item,
+            text: stripped.text,
+            metadata: {
+                ...(item?.metadata || {}),
+                ...(sectionTypes.length > 0 ? { sectionTypes: nextSectionTypes } : {}),
+            },
+        });
+    }
+
+    return out;
+}
+
+/**
+ * Extract latest developments items from cumulative chunks.
+ * @param {Array<Object>} items
+ * @returns {Array<{text: string, freshness: number, score: number}>}
+ */
+function collectLatestDevelopments(items) {
+    const seen = new Set();
+    const developments = [];
+
+    for (const item of (items || [])) {
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasDevelopments = sectionTypes.includes(DEVELOPMENTS_SECTION_KEY)
+            || /(^|\n)###\s+DEVELOPMENTS\b/i.test(String(item?.text || ''));
+        if (!likelyHasDevelopments) continue;
+
+        const sectionBody = extractSectionBodyByHeading(item?.text || '', DEVELOPMENTS_SECTION_LABEL);
+        if (!sectionBody) continue;
+
+        const entries = splitSectionListItems(sectionBody);
+        const freshness = getFreshnessEndIndex(item);
+        const score = Number(item?.score) || 0;
+
+        for (const entry of entries) {
+            const normalized = normalizeText(String(entry || '').trim());
+            if (!normalized || seen.has(normalized)) continue;
+            seen.add(normalized);
+
+            const text = /^[-*•]\s+/.test(String(entry || '').trim())
+                ? String(entry || '').trim()
+                : `- ${String(entry || '').trim()}`;
+            developments.push({ text, freshness, score });
+        }
+    }
+
+    return developments;
+}
+
+/**
+ * @param {Array<{text: string, freshness: number, score: number}>} queryDevs
+ * @param {Array<{text: string, freshness: number, score: number}>} fallbackDevs
+ * @returns {Array<{text: string, freshness: number, score: number}>}
+ */
+function mergeLatestDevelopments(queryDevs, fallbackDevs) {
+    const seen = new Set();
+    const latest = [];
+    for (const entry of [...(queryDevs || []), ...(fallbackDevs || [])]) {
+        const normalized = normalizeText(String(entry?.text || ''));
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        latest.push(entry);
+    }
+    return latest;
+}
+
+/**
+ * @param {Array<{text: string, freshness: number, score: number}>} devEntries
+ * @returns {Array<Object>}
+ */
+function compactDevelopmentsPinnedChunks(devEntries) {
+    const safeEntries = Array.isArray(devEntries) ? devEntries : [];
+    if (safeEntries.length === 0) return [];
+
+    safeEntries.sort((a, b) => Number(b?.freshness || -1) - Number(a?.freshness || -1));
+
+    const lines = [];
+    const seen = new Set();
+    let freshest = -1;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const entry of safeEntries) {
+        const line = String(entry?.text || '').trim();
+        if (!line) continue;
+        const normalized = normalizeText(line);
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        lines.push(line);
+        freshest = Math.max(freshest, Number(entry?.freshness || -1));
+        bestScore = Math.max(bestScore, Number(entry?.score) || 0);
+    }
+
+    if (lines.length === 0) return [];
+
+    return [{
+        text: `### ${DEVELOPMENTS_SECTION_LABEL}\n${lines.join('\n')}`.trim(),
+        hash: `developments-group|${freshest}|${lines.length}`,
+        score: Number.isFinite(bestScore) ? bestScore : 0,
+        metadata: {
+            chunkBehavior: 'cumulative',
+            sectionType: DEVELOPMENTS_SECTION_KEY,
+            sectionTypes: [DEVELOPMENTS_SECTION_KEY],
+            entityKey: '__pinned_group__',
+            freshnessEndIndex: freshest,
+            pinnedGroup: true,
+            pinnedGroupCount: lines.length,
+        },
+    }];
+}
+
+/**
+ * Remove DEVELOPMENTS section blocks from cumulative chunks so compact pinned developments
+ * can be appended once without duplicating the same section repeatedly.
+ * @param {Array<Object>} results
+ * @returns {Array<Object>}
+ */
+function stripDevelopmentsFromCumulativeResults(results) {
+    const out = [];
+
+    for (const item of (results || [])) {
+        if (item?.metadata?.chunkBehavior !== 'cumulative') {
+            out.push(item);
+            continue;
+        }
+
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasDevelopments = sectionTypes.includes(DEVELOPMENTS_SECTION_KEY)
+            || /(^|\n)###\s+DEVELOPMENTS\b/i.test(String(item?.text || ''));
+        if (!likelyHasDevelopments) {
+            out.push(item);
+            continue;
+        }
+
+        const stripped = stripSectionByHeading(item?.text || '', DEVELOPMENTS_SECTION_LABEL);
+        if (!stripped.removed) {
+            out.push(item);
+            continue;
+        }
+
+        if (!stripped.text) continue;
+        const nextSectionTypes = sectionTypes.length > 0
+            ? sectionTypes.filter(section => section !== DEVELOPMENTS_SECTION_KEY)
+            : sectionTypes;
+
+        out.push({
+            ...item,
+            text: stripped.text,
+            metadata: {
+                ...(item?.metadata || {}),
+                ...(sectionTypes.length > 0 ? { sectionTypes: nextSectionTypes } : {}),
+            },
+        });
+    }
+
+    return out;
+}
+
+/**
  * Parse scene code into numeric parts for sorting.
  * Supports S{shard}:{scene} format.
  * @param {string} code
@@ -145,14 +721,12 @@ function dedupeResults(results) {
         }
 
         if (behavior === 'rolling') {
-            const sectionType = String(item?.metadata?.sectionType || '');
-            const entityKey = String(item?.metadata?.entityKey || '');
-            if (!sectionType || !entityKey) {
+            const rollingKey = getRollingKey(item);
+            if (!rollingKey) {
                 passthrough.push(item);
                 continue;
             }
 
-            const rollingKey = `${sectionType}|${entityKey}`;
             const existing = latestRolling.get(rollingKey);
             if (!existing || getFreshnessEndIndex(item) > getFreshnessEndIndex(existing)) {
                 latestRolling.set(rollingKey, item);
@@ -194,6 +768,100 @@ async function fetchLatestSuperseding(collectionId, rag) {
 }
 
 /**
+ * Explicitly fetch rolling chunks and keep latest per sectionType|entityKey.
+ * Used as a fallback to ensure rolling section coverage is not query-score bound.
+ * @param {string} collectionId
+ * @param {Object} rag
+ * @param {number} [limit=50]
+ * @returns {Promise<{items: Array<Object>, fetchedCount: number, hasMore: boolean}>}
+ */
+async function fetchLatestRolling(collectionId, rag, limit = 50) {
+    try {
+        const safeLimit = Math.max(1, Number(limit) || 50);
+        const { items, hasMore } = await listChunks(collectionId, rag, {
+            limit: safeLimit,
+            metadataFilter: { chunkBehavior: 'rolling' },
+        });
+
+        const safeItems = Array.isArray(items) ? items : [];
+        return {
+            items: dedupeLatestRolling(safeItems),
+            fetchedCount: safeItems.length,
+            hasMore: !!hasMore,
+        };
+    } catch (error) {
+        console.warn(`${LOG_PREFIX} Fallback rolling fetch failed:`, error?.message || error);
+        return {
+            items: [],
+            fetchedCount: 0,
+            hasMore: false,
+        };
+    }
+}
+
+/**
+ * Explicitly fetch cumulative chunks and keep latest anchors by anchor key.
+ * @param {string} collectionId
+ * @param {Object} rag
+ * @param {number} [limit=50]
+ * @returns {Promise<{items: Array<{key: string, text: string, freshness: number, score: number}>, fetchedCount: number, hasMore: boolean}>}
+ */
+async function fetchLatestAnchors(collectionId, rag, limit = 50) {
+    try {
+        const safeLimit = Math.max(1, Number(limit) || 50);
+        const { items, hasMore } = await listChunks(collectionId, rag, {
+            limit: safeLimit,
+            metadataFilter: { chunkBehavior: 'cumulative' },
+        });
+
+        const safeItems = Array.isArray(items) ? items : [];
+        return {
+            items: collectLatestAnchors(safeItems),
+            fetchedCount: safeItems.length,
+            hasMore: !!hasMore,
+        };
+    } catch (error) {
+        console.warn(`${LOG_PREFIX} Fallback anchors fetch failed:`, error?.message || error);
+        return {
+            items: [],
+            fetchedCount: 0,
+            hasMore: false,
+        };
+    }
+}
+
+/**
+ * Explicitly fetch developments items from cumulative chunks.
+ * @param {string} collectionId
+ * @param {Object} rag
+ * @param {number} [limit=50]
+ * @returns {Promise<{items: Array<{text: string, freshness: number, score: number}>, fetchedCount: number, hasMore: boolean}>}
+ */
+async function fetchLatestDevelopments(collectionId, rag, limit = 50) {
+    try {
+        const safeLimit = Math.max(1, Number(limit) || 50);
+        const { items, hasMore } = await listChunks(collectionId, rag, {
+            limit: safeLimit,
+            metadataFilter: { chunkBehavior: 'cumulative' },
+        });
+
+        const safeItems = Array.isArray(items) ? items : [];
+        return {
+            items: collectLatestDevelopments(safeItems),
+            fetchedCount: safeItems.length,
+            hasMore: !!hasMore,
+        };
+    } catch (error) {
+        console.warn(`${LOG_PREFIX} Fallback developments fetch failed:`, error?.message || error);
+        return {
+            items: [],
+            fetchedCount: 0,
+            hasMore: false,
+        };
+    }
+}
+
+/**
  * @param {Array<Object>} results
  * @param {Array<Object>} chat
  * @param {number} protectCount
@@ -227,85 +895,113 @@ function dedupeAgainstRecentContext(results, chat, protectCount) {
 function orderWithSceneGrouping(results) {
     if (!Array.isArray(results) || results.length <= 1) return results || [];
 
-    const sceneBuckets = new Map();
-    const cumulativeNoScene = [];
-    const rolling = [];
     const superseding = [];
+    const cumulativeByScene = new Map();
+    const cumulativeNoScene = [];
+    const pinned = [];
     const legacyNoScene = [];
 
-    // Categorize items by behavior
+    // --- Categorize into three tiers ---
     for (const item of results) {
         const behavior = item?.metadata?.chunkBehavior || null;
+        const sectionType = item?.metadata?.sectionType || '';
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes) ? item.metadata.sectionTypes : [];
+
         if (behavior === 'superseding') {
             superseding.push(item);
             continue;
         }
 
         if (behavior === 'rolling') {
-            rolling.push(item);
+            pinned.push(item);
             continue;
         }
 
-        const sceneCode = item?.metadata?.sceneCode || null;
-        if (!sceneCode) {
-            if (behavior === 'cumulative') {
-                cumulativeNoScene.push(item);
+        // Developments and anchors pinned groups go to pinned tier
+        if (item?.metadata?.pinnedGroup && (sectionType === 'developments' || sectionType === 'anchors')) {
+            pinned.push(item);
+            continue;
+        }
+
+        // Regular cumulative
+        if (behavior === 'cumulative') {
+            const sceneCode = item?.metadata?.sceneCode || null;
+            if (sceneCode) {
+                if (!cumulativeByScene.has(sceneCode)) {
+                    cumulativeByScene.set(sceneCode, []);
+                }
+                cumulativeByScene.get(sceneCode).push(item);
             } else {
-                legacyNoScene.push(item);
+                cumulativeNoScene.push(item);
             }
             continue;
         }
 
-        if (!sceneBuckets.has(sceneCode)) {
-            sceneBuckets.set(sceneCode, []);
-        }
-        sceneBuckets.get(sceneCode).push(item);
+        legacyNoScene.push(item);
     }
 
-    // Sort items within buckets and non-bucketed categories
-    for (const bucket of sceneBuckets.values()) {
-        bucket.sort(compareChronologically);
-    }
-
+    // --- Sort each tier ---
     superseding.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
-    cumulativeNoScene.sort(compareChronologically);
-    rolling.sort((a, b) => {
-        const scoreDelta = (Number(b?.score) || 0) - (Number(a?.score) || 0);
-        if (scoreDelta !== 0) return scoreDelta;
-        return String(a?.metadata?.sectionType || '').localeCompare(String(b?.metadata?.sectionType || ''));
+
+    // Sort cumulative scene buckets chronologically, and intra-scene items by section order
+    const sortedSceneCodes = [...cumulativeByScene.keys()].sort((a, b) => {
+        const pA = parseSceneCode(a);
+        const pB = parseSceneCode(b);
+        if (pA && pB) {
+            if (pA.shard !== pB.shard) return pA.shard - pB.shard;
+            return pA.scene - pB.scene;
+        }
+        return 0;
     });
+
+    for (const bucket of cumulativeByScene.values()) {
+        bucket.sort((a, b) => {
+            const getSectionPriority = (item) => {
+                const types = Array.isArray(item?.metadata?.sectionTypes) ? item.metadata.sectionTypes : [];
+                let best = CUMULATIVE_SECTION_ORDER.length;
+                for (const t of types) {
+                    const idx = CUMULATIVE_SECTION_ORDER.indexOf(t);
+                    if (idx >= 0 && idx < best) best = idx;
+                }
+                return best;
+            };
+            return getSectionPriority(a) - getSectionPriority(b);
+        });
+    }
+
+    cumulativeNoScene.sort(compareChronologically);
+
+    // Sort pinned by PINNED_TIER_ORDER
+    pinned.sort((a, b) => {
+        const getOrder = (item) => {
+            const st = item?.metadata?.sectionType || '';
+            const idx = PINNED_TIER_ORDER.indexOf(st);
+            return idx >= 0 ? idx : PINNED_TIER_ORDER.length;
+        };
+        return getOrder(a) - getOrder(b);
+    });
+
     legacyNoScene.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
 
-    // Initialize ordered list with superseding (Current State) items at the top
-    const ordered = [...superseding];
-    const usedScenes = new Set();
+    // --- Assemble three-tier output ---
+    const ordered = [];
 
-    // Determine the global chronological order of scenes and interleaved cumulative items
-    // First, find a "lead" item for each unique scene to represent its position
-    const sceneLeads = [];
-    for (const [code, items] of sceneBuckets.entries()) {
-        // Use the first item in the sorted bucket as the lead
-        sceneLeads.push(items[0]);
-    }
+    // Tier 1: Superseding
+    ordered.push(...superseding);
 
-    // Combine scene leads and items without scene codes into a single sortable sequence
-    const timelineSequence = [...sceneLeads, ...cumulativeNoScene].sort(compareChronologically);
-
-    for (const item of timelineSequence) {
-        const sceneCode = item?.metadata?.sceneCode || null;
-        if (sceneCode) {
-            if (usedScenes.has(sceneCode)) continue;
-            usedScenes.add(sceneCode);
-            // Append the whole bucket for this scene (now in its correct chronological slot)
-            ordered.push(...(sceneBuckets.get(sceneCode) || []));
-        } else {
-            // Append cumulative items that don't have a scene code (interleaved chronologically)
-            ordered.push(item);
+    // Tier 2: Cumulative (chronological by scene code)
+    for (const sceneCode of sortedSceneCodes) {
+        const items = cumulativeByScene.get(sceneCode) || [];
+        if (items.length > 0) {
+            ordered.push(...items);
         }
     }
+    ordered.push(...cumulativeNoScene);
 
-    // Append rolling and legacy items at the end
-    ordered.push(...rolling);
+    // Tier 3: Pinned (rolling + developments + anchors)
+    ordered.push(...pinned);
+
+    // Legacy at the very end
     ordered.push(...legacyNoScene);
 
     return dedupeResults(ordered);
@@ -461,7 +1157,23 @@ function cleanChunkText(text) {
  * @returns {string}
  */
 function formatInjectionText(template, results) {
-    const lines = (results || []).map(item => cleanChunkText(String(item?.text || ''))).filter(Boolean);
+    const lines = [];
+    let lastSceneCode = null;
+
+    for (const item of (results || [])) {
+        const cleaned = cleanChunkText(String(item?.text || ''));
+        if (!cleaned) continue;
+
+        // Add scene code group header for cumulative chunks
+        const sceneCode = item?.metadata?.sceneCode || null;
+        if (sceneCode && item?.metadata?.chunkBehavior === 'cumulative' && sceneCode !== lastSceneCode) {
+            lines.push(`Timeline [${sceneCode}]`);
+            lastSceneCode = sceneCode;
+        }
+
+        lines.push(cleaned);
+    }
+
     if (lines.length === 0) return '';
 
     const textBlock = lines.join('\n\n');
@@ -586,6 +1298,41 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             }
         }
 
+        const queryRolling = isSharder ? dedupeLatestRolling(merged) : [];
+        const queryAnchors = isSharder ? collectLatestAnchors(merged) : [];
+        const queryDevelopments = isSharder ? collectLatestDevelopments(merged) : [];
+        let rollingPinned = [];
+        let rollingPinnedCompacted = [];
+        let anchorsPinned = [];
+        let anchorsPinnedCompacted = [];
+        let developmentsPinned = [];
+        let developmentsPinnedCompacted = [];
+        let rollingFallbackFetched = 0;
+        let rollingFallbackHasMore = false;
+        let anchorsFallbackFetched = 0;
+        let anchorsFallbackHasMore = false;
+        let developmentsFallbackFetched = 0;
+        let developmentsFallbackHasMore = false;
+        if (isSharder) {
+            const fallbackRolling = await fetchLatestRolling(collectionId, rag, 50);
+            rollingPinned = mergeLatestRolling(queryRolling, fallbackRolling.items);
+            rollingPinnedCompacted = compactRollingPinnedChunks(rollingPinned, rag);
+            rollingFallbackFetched = fallbackRolling.fetchedCount;
+            rollingFallbackHasMore = fallbackRolling.hasMore;
+
+            const fallbackAnchors = await fetchLatestAnchors(collectionId, rag, 50);
+            anchorsPinned = mergeLatestAnchors(queryAnchors, fallbackAnchors.items);
+            anchorsPinnedCompacted = compactAnchorsPinnedChunks(anchorsPinned, rag);
+            anchorsFallbackFetched = fallbackAnchors.fetchedCount;
+            anchorsFallbackHasMore = fallbackAnchors.hasMore;
+
+            const fallbackDevelopments = await fetchLatestDevelopments(collectionId, rag, 50);
+            developmentsPinned = mergeLatestDevelopments(queryDevelopments, fallbackDevelopments.items);
+            developmentsPinnedCompacted = compactDevelopmentsPinnedChunks(developmentsPinned);
+            developmentsFallbackFetched = fallbackDevelopments.fetchedCount;
+            developmentsFallbackHasMore = fallbackDevelopments.hasMore;
+        }
+
         merged = dedupeAgainstRecentContext(merged, chat, rag.protectCount);
         merged = applyImportanceBoost(merged);
 
@@ -604,6 +1351,20 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
 
         // Scene grouping only applies to Sharder Mode
         merged = isSharder ? orderWithSceneGrouping(merged) : merged;
+
+        if (isSharder && (rollingPinnedCompacted.length > 0 || anchorsPinnedCompacted.length > 0 || developmentsPinnedCompacted.length > 0)) {
+            let mergedShaped = merged;
+            if (rollingPinnedCompacted.length > 0) {
+                mergedShaped = mergedShaped.filter(item => item?.metadata?.chunkBehavior !== 'rolling');
+            }
+            if (anchorsPinnedCompacted.length > 0) {
+                mergedShaped = stripAnchorsFromCumulativeResults(mergedShaped);
+            }
+            if (developmentsPinnedCompacted.length > 0) {
+                mergedShaped = stripDevelopmentsFromCumulativeResults(mergedShaped);
+            }
+            merged = dedupeResults([...mergedShaped, ...rollingPinnedCompacted, ...anchorsPinnedCompacted, ...developmentsPinnedCompacted]);
+        }
 
         const injection = formatInjectionText(rag.template, merged);
         applyInjection(injection, rag);
@@ -636,6 +1397,18 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             useClientHybrid,
             shardResults: shardResults.length,
             sceneExpanded: sceneExpanded.length,
+            rollingPinned: rollingPinned.length,
+            rollingPinnedCompacted: rollingPinnedCompacted.length,
+            rollingFallbackFetched,
+            rollingFallbackHasMore,
+            anchorsPinned: anchorsPinned.length,
+            anchorsPinnedCompacted: anchorsPinnedCompacted.length,
+            anchorsFallbackFetched,
+            anchorsFallbackHasMore,
+            developmentsPinned: developmentsPinned.length,
+            developmentsPinnedCompacted: developmentsPinnedCompacted.length,
+            developmentsFallbackFetched,
+            developmentsFallbackHasMore,
             rerankerApplied: !!rerankMeta.metadata?.applied,
             rerankerMode: rerankMeta.metadata?.mode || 'none',
             finalResults: merged.length,

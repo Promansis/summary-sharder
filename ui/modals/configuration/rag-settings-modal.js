@@ -382,6 +382,11 @@ function renderModalHtml(rag, isSharder) {
                             <input id="ss-rag-protect-count" class="text_pole ss-rag-control" type="number" min="0" value="${rag.protectCount ?? 5}" />
                         </div>
                         <div class="ss-block">
+                            <label for="ss-rag-max-items">Max Items per Section</label>
+                            <span class="ss-rag-sublabel">Cap items per section in compacted blocks (Rolling/Anchors)</span>
+                            <input id="ss-rag-max-items" class="text_pole ss-rag-control" type="number" min="1" value="${rag.maxItemsPerCompactedSection ?? 5}" />
+                        </div>
+                        <div class="ss-block">
                             <label for="ss-rag-threshold">Score Threshold ${infoHintHtml('ss-rag-score-threshold-hint', 'Minimum relevance score a chunk must meet to be included (0-1). Higher = stricter.')}</label>
                             <div id="ss-rag-threshold-host"></div>
                         </div>
@@ -801,6 +806,7 @@ function readRagDraft(base, isSharder) {
     draft.insertCount = Math.max(1, toInt(document.getElementById('ss-rag-insert-count')?.value, 5));
     draft.queryCount = Math.max(1, toInt(document.getElementById('ss-rag-query-count')?.value, 2));
     draft.protectCount = Math.max(0, toInt(document.getElementById('ss-rag-protect-count')?.value, 5));
+    draft.maxItemsPerCompactedSection = Math.max(1, toInt(document.getElementById('ss-rag-max-items')?.value, 5));
     draft.scoreThreshold = Math.min(1, Math.max(0, toFloat(document.getElementById('ss-rag-threshold')?.value, 0.25)));
     draft.position = toInt(document.getElementById('ss-rag-position')?.value, 0);
     draft.depth = Math.max(0, toInt(document.getElementById('ss-rag-depth')?.value, 2));
@@ -872,6 +878,7 @@ function updateDomFromDraft(draft, isSharder) {
     setValue('ss-rag-insert-count', draft.insertCount ?? 5);
     setValue('ss-rag-query-count', draft.queryCount ?? 2);
     setValue('ss-rag-protect-count', draft.protectCount ?? 5);
+    setValue('ss-rag-max-items', draft.maxItemsPerCompactedSection ?? 5);
     setRangePairValue('ss-rag-threshold', draft.scoreThreshold ?? 0.25);
     setValue('ss-rag-position', draft.position ?? 0);
     setValue('ss-rag-depth', draft.depth ?? 2);
@@ -1044,6 +1051,7 @@ function buildRagDraftFromSource(src, isSharder) {
         insertCount: source.insertCount ?? 5,
         queryCount: source.queryCount ?? 2,
         protectCount: source.protectCount ?? 5,
+        maxItemsPerCompactedSection: source.maxItemsPerCompactedSection ?? 5,
         scoreThreshold: source.scoreThreshold ?? 0.25,
         scoringMethod: source.scoringMethod || 'keyword',
         hybridFusionMethod: source.hybridFusionMethod || 'rrf',

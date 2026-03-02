@@ -205,6 +205,7 @@ export function getDefaultSettings() {
             insertCount: 5,
             queryCount: 2,
             protectCount: 5,
+            maxItemsPerCompactedSection: 5,
             scoreThreshold: 0.25,
             scoringMethod: 'keyword',       // 'keyword' | 'bm25' | 'hybrid'
             hybridFusionMethod: 'rrf',      // 'rrf' | 'weighted'
@@ -259,6 +260,7 @@ export function getDefaultSettings() {
             insertCount: 5,
             queryCount: 2,
             protectCount: 5,
+            maxItemsPerCompactedSection: 5,
             scoreThreshold: 0.25,
             scoringMethod: 'keyword',
             hybridFusionMethod: 'rrf',

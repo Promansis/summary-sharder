@@ -44,6 +44,433 @@ function getFreshnessEndIndex(item) {
 
 /**
  * Keep aligned with retrieval.js helper.
+ * @param {Object} item
+ * @returns {string}
+ */
+function getRollingKey(item) {
+    const sectionType = String(item?.metadata?.sectionType || '');
+    const entityKey = String(item?.metadata?.entityKey || '');
+    if (!sectionType || !entityKey) return '';
+    return `${sectionType}|${entityKey}`;
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} items
+ * @returns {Array<Object>}
+ */
+function dedupeLatestRolling(items) {
+    const latestRolling = new Map();
+
+    for (const item of (items || [])) {
+        if (item?.metadata?.chunkBehavior !== 'rolling') continue;
+        const rollingKey = getRollingKey(item);
+        if (!rollingKey) continue;
+
+        const existing = latestRolling.get(rollingKey);
+        if (!existing || getFreshnessEndIndex(item) > getFreshnessEndIndex(existing)) {
+            latestRolling.set(rollingKey, item);
+        }
+    }
+
+    return [...latestRolling.values()];
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} queryRolling
+ * @param {Array<Object>} fallbackRolling
+ * @returns {Array<Object>}
+ */
+function mergeLatestRolling(queryRolling, fallbackRolling) {
+    return dedupeLatestRolling([...(queryRolling || []), ...(fallbackRolling || [])]);
+}
+
+const ROLLING_SECTION_ORDER = ['relationshipShifts', 'callbacks', 'looseThreads'];
+const ROLLING_SECTION_LABELS = {
+    relationshipShifts: 'RELATIONSHIPS',
+    callbacks: 'CALLBACKS',
+    looseThreads: 'THREADS',
+};
+const ANCHORS_SECTION_KEY = 'anchors';
+const ANCHORS_SECTION_LABEL = 'ANCHORS';
+const DEVELOPMENTS_SECTION_KEY = 'developments';
+const DEVELOPMENTS_SECTION_LABEL = 'DEVELOPMENTS';
+
+const CUMULATIVE_SECTION_ORDER = ['events', 'scenes', 'keyDialogue', 'characterStates', 'sceneBreaks', 'nsfwContent'];
+const PINNED_TIER_ORDER = ['developments', 'anchors', 'relationshipShifts', 'callbacks', 'looseThreads'];
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {string} text
+ * @returns {string}
+ */
+function stripLeadingSectionHeader(text) {
+    const input = String(text || '').trim();
+    if (!input) return '';
+    const lines = input.split('\n');
+    if (lines.length > 1 && /^###\s+/.test(String(lines[0] || '').trim())) {
+        return lines.slice(1).join('\n').trim();
+    }
+    return input;
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} rollingItems
+ * @param {Object} [rag]
+ * @returns {Array<Object>}
+ */
+function compactRollingPinnedChunks(rollingItems, rag) {
+    const grouped = new Map();
+
+    const maxItemsPerSection = Number(rag?.maxItemsPerCompactedSection) || 5;
+
+    for (const item of (rollingItems || [])) {
+        if (item?.metadata?.chunkBehavior !== 'rolling') continue;
+        const rollingKey = getRollingKey(item);
+        if (!rollingKey) continue;
+        const sectionType = String(item?.metadata?.sectionType || '');
+        if (!sectionType) continue;
+        if (!grouped.has(sectionType)) {
+            grouped.set(sectionType, []);
+        }
+        grouped.get(sectionType).push(item);
+    }
+
+    const sectionTypes = [
+        ...ROLLING_SECTION_ORDER.filter(section => grouped.has(section)),
+        ...[...grouped.keys()].filter(section => !ROLLING_SECTION_ORDER.includes(section)),
+    ];
+
+    const out = [];
+    for (const sectionType of sectionTypes) {
+        const items = grouped.get(sectionType) || [];
+        if (items.length === 0) continue;
+
+        items.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
+        const seenBodies = new Set();
+        const bodies = [];
+        let freshest = -1;
+        let bestScore = Number.NEGATIVE_INFINITY;
+
+        for (const item of items) {
+            if (bodies.length >= maxItemsPerSection) break;
+
+            const body = stripLeadingSectionHeader(item?.text || '');
+            if (!body) continue;
+            const normalizedBody = normalizeText(body);
+            if (!normalizedBody || seenBodies.has(normalizedBody)) continue;
+            seenBodies.add(normalizedBody);
+            bodies.push(body);
+            freshest = Math.max(freshest, getFreshnessEndIndex(item));
+            bestScore = Math.max(bestScore, Number(item?.score) || 0);
+        }
+
+        if (bodies.length === 0) continue;
+
+        const heading = ROLLING_SECTION_LABELS[sectionType] || String(sectionType || '').toUpperCase();
+        out.push({
+            text: `### ${heading}\n${bodies.join('\n')}`.trim(),
+            hash: `rolling-group|${sectionType}|${freshest}|${bodies.length}`,
+            score: Number.isFinite(bestScore) ? bestScore : 0,
+            metadata: {
+                chunkBehavior: 'rolling',
+                sectionType,
+                sectionTypes: [sectionType],
+                entityKey: '__pinned_group__',
+                freshnessEndIndex: freshest,
+                pinnedGroup: true,
+                pinnedGroupCount: bodies.length,
+            },
+        });
+    }
+
+    return out;
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {string} text
+ * @param {string} headingName
+ * @returns {string}
+ */
+function extractSectionBodyByHeading(text, headingName) {
+    const lines = String(text || '').split('\n');
+    const target = String(headingName || '').trim().toUpperCase();
+    let inTarget = false;
+    const buffer = [];
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || '');
+        const header = line.match(/^###\s+(.+?)\s*$/);
+        if (header) {
+            const headerName = String(header[1] || '').trim().toUpperCase();
+            if (inTarget && headerName !== target) break;
+            inTarget = headerName === target;
+            continue;
+        }
+        if (inTarget) {
+            buffer.push(line);
+        }
+    }
+
+    return buffer.join('\n').trim();
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {string} sectionText
+ * @returns {Array<string>}
+ */
+function splitSectionListItems(sectionText) {
+    const input = String(sectionText || '').trim();
+    if (!input) return [];
+
+    const lines = input.split('\n');
+    const items = [];
+    let current = '';
+
+    const flush = () => {
+        const value = String(current || '').trim();
+        if (value) items.push(value);
+        current = '';
+    };
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || '').trim();
+        if (!line) continue;
+
+        if (/^[-*•]\s+/.test(line)) {
+            flush();
+            current = line;
+        } else if (!current) {
+            current = line;
+        } else {
+            current += ` ${line}`;
+        }
+    }
+
+    flush();
+    return items;
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {string} itemText
+ * @returns {string}
+ */
+function getAnchorKey(itemText) {
+    const text = String(itemText || '')
+        .replace(/^[-*•]\s+/, '')
+        .trim();
+    if (!text) return '';
+    return String(text.split('|')[0] || '').trim().toLowerCase();
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} items
+ * @returns {Array<{key: string, text: string, freshness: number, score: number}>}
+ */
+function collectLatestAnchors(items) {
+    const latest = new Map();
+
+    for (const item of (items || [])) {
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasAnchors = sectionTypes.includes(ANCHORS_SECTION_KEY)
+            || /(^|\n)###\s+ANCHORS\b/i.test(String(item?.text || ''));
+        if (!likelyHasAnchors) continue;
+
+        const sectionBody = extractSectionBodyByHeading(item?.text || '', ANCHORS_SECTION_LABEL);
+        if (!sectionBody) continue;
+
+        const entries = splitSectionListItems(sectionBody);
+        for (const entry of entries) {
+            const key = getAnchorKey(entry);
+            if (!key) continue;
+
+            const normalized = String(entry || '').trim();
+            if (!normalized) continue;
+            const freshness = getFreshnessEndIndex(item);
+            const score = Number(item?.score) || 0;
+            const value = {
+                key,
+                text: /^[-*•]\s+/.test(normalized) ? normalized : `- ${normalized}`,
+                freshness,
+                score,
+            };
+
+            const existing = latest.get(key);
+            if (!existing || freshness > existing.freshness) {
+                latest.set(key, value);
+            }
+        }
+    }
+
+    return [...latest.values()];
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<{key: string, text: string, freshness: number, score: number}>} queryAnchors
+ * @param {Array<{key: string, text: string, freshness: number, score: number}>} fallbackAnchors
+ * @returns {Array<{key: string, text: string, freshness: number, score: number}>}
+ */
+function mergeLatestAnchors(queryAnchors, fallbackAnchors) {
+    const latest = new Map();
+    for (const entry of [...(queryAnchors || []), ...(fallbackAnchors || [])]) {
+        const key = String(entry?.key || '').trim();
+        if (!key) continue;
+        const freshness = Number(entry?.freshness);
+        const existing = latest.get(key);
+        if (!existing || freshness > Number(existing?.freshness)) {
+            latest.set(key, entry);
+        }
+    }
+    return [...latest.values()];
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} anchorEntries
+ * @param {Object} [rag]
+ * @returns {Array<Object>}
+ */
+function compactAnchorsPinnedChunks(anchorEntries, rag) {
+    const safeEntries = Array.isArray(anchorEntries) ? anchorEntries : [];
+    if (safeEntries.length === 0) return [];
+
+    const maxAnchors = Number(rag?.maxItemsPerCompactedSection) || 5;
+
+    safeEntries.sort((a, b) => Number(b?.freshness || -1) - Number(a?.freshness || -1));
+
+    const lines = [];
+    const seen = new Set();
+    let freshest = -1;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const entry of safeEntries) {
+        if (lines.length >= maxAnchors) break;
+
+        const line = String(entry?.text || '').trim();
+        if (!line) continue;
+        const normalized = normalizeText(line);
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        lines.push(line);
+        freshest = Math.max(freshest, Number(entry?.freshness || -1));
+        bestScore = Math.max(bestScore, Number(entry?.score) || 0);
+    }
+
+    if (lines.length === 0) return [];
+
+    return [{
+        text: `### ${ANCHORS_SECTION_LABEL}\n${lines.join('\n')}`.trim(),
+        hash: `anchors-group|${freshest}|${lines.length}`,
+        score: Number.isFinite(bestScore) ? bestScore : 0,
+        metadata: {
+            chunkBehavior: 'cumulative',
+            sectionType: ANCHORS_SECTION_KEY,
+            sectionTypes: [ANCHORS_SECTION_KEY],
+            entityKey: '__pinned_group__',
+            freshnessEndIndex: freshest,
+            pinnedGroup: true,
+            pinnedGroupCount: lines.length,
+        },
+    }];
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {string} text
+ * @param {string} headingName
+ * @returns {{text: string, removed: boolean}}
+ */
+function stripSectionByHeading(text, headingName) {
+    const lines = String(text || '').split('\n');
+    const target = String(headingName || '').trim().toUpperCase();
+    const kept = [];
+    let skipping = false;
+    let removed = false;
+
+    for (const rawLine of lines) {
+        const line = String(rawLine || '');
+        const header = line.match(/^###\s+(.+?)\s*$/);
+        if (header) {
+            const headerName = String(header[1] || '').trim().toUpperCase();
+            skipping = headerName === target;
+            if (skipping) {
+                removed = true;
+                continue;
+            }
+            kept.push(line);
+            continue;
+        }
+
+        if (!skipping) {
+            kept.push(line);
+        }
+    }
+
+    return {
+        text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
+        removed,
+    };
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} results
+ * @returns {Array<Object>}
+ */
+function stripAnchorsFromCumulativeResults(results) {
+    const out = [];
+
+    for (const item of (results || [])) {
+        if (item?.metadata?.chunkBehavior !== 'cumulative') {
+            out.push(item);
+            continue;
+        }
+
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasAnchors = sectionTypes.includes(ANCHORS_SECTION_KEY)
+            || /(^|\n)###\s+ANCHORS\b/i.test(String(item?.text || ''));
+        if (!likelyHasAnchors) {
+            out.push(item);
+            continue;
+        }
+
+        const stripped = stripSectionByHeading(item?.text || '', ANCHORS_SECTION_LABEL);
+        if (!stripped.removed) {
+            out.push(item);
+            continue;
+        }
+
+        if (!stripped.text) continue;
+        const nextSectionTypes = sectionTypes.length > 0
+            ? sectionTypes.filter(section => section !== ANCHORS_SECTION_KEY)
+            : sectionTypes;
+
+        out.push({
+            ...item,
+            text: stripped.text,
+            metadata: {
+                ...(item?.metadata || {}),
+                ...(sectionTypes.length > 0 ? { sectionTypes: nextSectionTypes } : {}),
+            },
+        });
+    }
+
+    return out;
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
  * @param {Array<Object>} chat
  * @param {number} queryCount
  * @returns {string}
@@ -107,14 +534,12 @@ function dedupeResultsWithMeta(results) {
         }
 
         if (behavior === 'rolling') {
-            const sectionType = String(item?.metadata?.sectionType || '');
-            const entityKey = String(item?.metadata?.entityKey || '');
-            if (!sectionType || !entityKey) {
+            const rollingKey = getRollingKey(item);
+            if (!rollingKey) {
                 passthrough.push(item);
                 continue;
             }
 
-            const rollingKey = `${sectionType}|${entityKey}`;
             const existing = latestRolling.get(rollingKey);
             if (!existing || getFreshnessEndIndex(item) > getFreshnessEndIndex(existing)) {
                 if (existing) {
@@ -185,6 +610,206 @@ function dedupeAgainstRecentContextWithMeta(results, chat, protectCount) {
 }
 
 /**
+ * Extract latest developments items from cumulative chunks.
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} items
+ * @returns {Array<{text: string, freshness: number, score: number}>}
+ */
+function collectLatestDevelopments(items) {
+    const seen = new Set();
+    const developments = [];
+
+    for (const item of (items || [])) {
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasDevelopments = sectionTypes.includes(DEVELOPMENTS_SECTION_KEY)
+            || /(^|\n)###\s+DEVELOPMENTS\b/i.test(String(item?.text || ''));
+        if (!likelyHasDevelopments) continue;
+
+        const sectionBody = extractSectionBodyByHeading(item?.text || '', DEVELOPMENTS_SECTION_LABEL);
+        if (!sectionBody) continue;
+
+        const entries = splitSectionListItems(sectionBody);
+        const freshness = getFreshnessEndIndex(item);
+        const score = Number(item?.score) || 0;
+
+        for (const entry of entries) {
+            const normalized = normalizeText(String(entry || '').trim());
+            if (!normalized || seen.has(normalized)) continue;
+            seen.add(normalized);
+
+            const text = /^[-*•]\s+/.test(String(entry || '').trim())
+                ? String(entry || '').trim()
+                : `- ${String(entry || '').trim()}`;
+            developments.push({ text, freshness, score });
+        }
+    }
+
+    return developments;
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<{text: string, freshness: number, score: number}>} queryDevs
+ * @param {Array<{text: string, freshness: number, score: number}>} fallbackDevs
+ * @returns {Array<{text: string, freshness: number, score: number}>}
+ */
+function mergeLatestDevelopments(queryDevs, fallbackDevs) {
+    const seen = new Set();
+    const latest = [];
+    for (const entry of [...(queryDevs || []), ...(fallbackDevs || [])]) {
+        const normalized = normalizeText(String(entry?.text || ''));
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        latest.push(entry);
+    }
+    return latest;
+}
+
+/**
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<{text: string, freshness: number, score: number}>} devEntries
+ * @returns {Array<Object>}
+ */
+function compactDevelopmentsPinnedChunks(devEntries) {
+    const safeEntries = Array.isArray(devEntries) ? devEntries : [];
+    if (safeEntries.length === 0) return [];
+
+    safeEntries.sort((a, b) => Number(b?.freshness || -1) - Number(a?.freshness || -1));
+
+    const lines = [];
+    const seen = new Set();
+    let freshest = -1;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const entry of safeEntries) {
+        const line = String(entry?.text || '').trim();
+        if (!line) continue;
+        const normalized = normalizeText(line);
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        lines.push(line);
+        freshest = Math.max(freshest, Number(entry?.freshness || -1));
+        bestScore = Math.max(bestScore, Number(entry?.score) || 0);
+    }
+
+    if (lines.length === 0) return [];
+
+    return [{
+        text: `### ${DEVELOPMENTS_SECTION_LABEL}\n${lines.join('\n')}`.trim(),
+        hash: `developments-group|${freshest}|${lines.length}`,
+        score: Number.isFinite(bestScore) ? bestScore : 0,
+        metadata: {
+            chunkBehavior: 'cumulative',
+            sectionType: DEVELOPMENTS_SECTION_KEY,
+            sectionTypes: [DEVELOPMENTS_SECTION_KEY],
+            entityKey: '__pinned_group__',
+            freshnessEndIndex: freshest,
+            pinnedGroup: true,
+            pinnedGroupCount: lines.length,
+        },
+    }];
+}
+
+/**
+ * Remove DEVELOPMENTS section blocks from cumulative chunks.
+ * Keep aligned with retrieval.js helper.
+ * @param {Array<Object>} results
+ * @returns {{items: Array<Object>, metadata: Object}}
+ */
+function stripDevelopmentsFromCumulativeResults(results) {
+    const out = [];
+    const droppedReasons = [];
+
+    for (const item of (results || [])) {
+        if (item?.metadata?.chunkBehavior !== 'cumulative') {
+            out.push(item);
+            continue;
+        }
+
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes)
+            ? item.metadata.sectionTypes
+            : [];
+        const likelyHasDevelopments = sectionTypes.includes(DEVELOPMENTS_SECTION_KEY)
+            || /(^|\n)###\s+DEVELOPMENTS\b/i.test(String(item?.text || ''));
+        if (!likelyHasDevelopments) {
+            out.push(item);
+            continue;
+        }
+
+        const stripped = stripSectionByHeading(item?.text || '', DEVELOPMENTS_SECTION_LABEL);
+        if (!stripped.removed) {
+            out.push(item);
+            continue;
+        }
+
+        if (!stripped.text) {
+            droppedReasons.push({ reason: 'developments-stripped-empty', item });
+            continue;
+        }
+
+        const nextSectionTypes = sectionTypes.length > 0
+            ? sectionTypes.filter(section => section !== DEVELOPMENTS_SECTION_KEY)
+            : sectionTypes;
+
+        out.push({
+            ...item,
+            text: stripped.text,
+            metadata: {
+                ...(item?.metadata || {}),
+                ...(sectionTypes.length > 0 ? { sectionTypes: nextSectionTypes } : {}),
+            },
+        });
+    }
+
+    return { items: out, metadata: { droppedReasons } };
+}
+
+/**
+ * Parse scene code into numeric parts for sorting.
+ * Supports S{shard}:{scene} format.
+ * @param {string} code
+ * @returns {{shard: number, scene: number}|null}
+ */
+function parseSceneCode(code) {
+    const match = String(code || '').match(/S(\d+):(\d+)/i);
+    if (!match) return null;
+    return {
+        shard: parseInt(match[1], 10),
+        scene: parseInt(match[2], 10),
+    };
+}
+
+/**
+ * Compare two items chronologically.
+ * Prioritizes parsed scene codes, falls back to freshness index.
+ * @param {Object} a
+ * @param {Object} b
+ * @returns {number}
+ */
+function compareChronologically(a, b) {
+    const codeA = a?.metadata?.sceneCode;
+    const codeB = b?.metadata?.sceneCode;
+    const pA = parseSceneCode(codeA);
+    const pB = parseSceneCode(codeB);
+
+    if (pA && pB) {
+        if (pA.shard !== pB.shard) return pA.shard - pB.shard;
+        return pA.scene - pB.scene;
+    }
+
+    const fA = getFreshnessEndIndex(a);
+    const fB = getFreshnessEndIndex(b);
+    if (fA !== fB) return fA - fB;
+
+    if (pA && !pB) return -1;
+    if (!pA && pB) return 1;
+
+    return 0;
+}
+
+/**
  * Keep aligned with retrieval.js helper.
  * @param {Array<Object>} results
  * @returns {Array<Object>}
@@ -192,70 +817,115 @@ function dedupeAgainstRecentContextWithMeta(results, chat, protectCount) {
 function orderWithSceneGrouping(results) {
     if (!Array.isArray(results) || results.length <= 1) return results || [];
 
-    const sceneBuckets = new Map();
-    const cumulativeNoScene = [];
-    const rolling = [];
     const superseding = [];
+    const cumulativeByScene = new Map();
+    const cumulativeNoScene = [];
+    const pinned = [];
     const legacyNoScene = [];
 
+    // --- Categorize into three tiers ---
     for (const item of results) {
         const behavior = item?.metadata?.chunkBehavior || null;
+        const sectionType = item?.metadata?.sectionType || '';
+        const sectionTypes = Array.isArray(item?.metadata?.sectionTypes) ? item.metadata.sectionTypes : [];
+
         if (behavior === 'superseding') {
             superseding.push(item);
             continue;
         }
 
         if (behavior === 'rolling') {
-            rolling.push(item);
+            pinned.push(item);
             continue;
         }
 
-        const sceneCode = item?.metadata?.sceneCode || null;
-        if (!sceneCode) {
-            if (behavior === 'cumulative') {
-                cumulativeNoScene.push(item);
+        // Developments and anchors pinned groups go to pinned tier
+        if (item?.metadata?.pinnedGroup && (sectionType === 'developments' || sectionType === 'anchors')) {
+            pinned.push(item);
+            continue;
+        }
+
+        // Regular cumulative
+        if (behavior === 'cumulative') {
+            const sceneCode = item?.metadata?.sceneCode || null;
+            if (sceneCode) {
+                if (!cumulativeByScene.has(sceneCode)) {
+                    cumulativeByScene.set(sceneCode, []);
+                }
+                cumulativeByScene.get(sceneCode).push(item);
             } else {
-                legacyNoScene.push(item);
+                cumulativeNoScene.push(item);
             }
             continue;
         }
 
-        if (!sceneBuckets.has(sceneCode)) {
-            sceneBuckets.set(sceneCode, []);
-        }
-        sceneBuckets.get(sceneCode).push(item);
+        legacyNoScene.push(item);
     }
 
-    for (const bucket of sceneBuckets.values()) {
-        bucket.sort((a, b) => getFreshnessEndIndex(a) - getFreshnessEndIndex(b));
-    }
-
+    // --- Sort each tier ---
     superseding.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
-    cumulativeNoScene.sort((a, b) => getFreshnessEndIndex(a) - getFreshnessEndIndex(b));
-    rolling.sort((a, b) => {
-        const scoreDelta = (Number(b?.score) || 0) - (Number(a?.score) || 0);
-        if (scoreDelta !== 0) return scoreDelta;
-        return String(a?.metadata?.sectionType || '').localeCompare(String(b?.metadata?.sectionType || ''));
+
+    // Sort cumulative scene buckets chronologically, and intra-scene items by section order
+    const sortedSceneCodes = [...cumulativeByScene.keys()].sort((a, b) => {
+        const pA = parseSceneCode(a);
+        const pB = parseSceneCode(b);
+        if (pA && pB) {
+            if (pA.shard !== pB.shard) return pA.shard - pB.shard;
+            return pA.scene - pB.scene;
+        }
+        return 0;
     });
+
+    for (const bucket of cumulativeByScene.values()) {
+        bucket.sort((a, b) => {
+            const getSectionPriority = (item) => {
+                const types = Array.isArray(item?.metadata?.sectionTypes) ? item.metadata.sectionTypes : [];
+                let best = CUMULATIVE_SECTION_ORDER.length;
+                for (const t of types) {
+                    const idx = CUMULATIVE_SECTION_ORDER.indexOf(t);
+                    if (idx >= 0 && idx < best) best = idx;
+                }
+                return best;
+            };
+            return getSectionPriority(a) - getSectionPriority(b);
+        });
+    }
+
+    cumulativeNoScene.sort(compareChronologically);
+
+    // Sort pinned by PINNED_TIER_ORDER
+    pinned.sort((a, b) => {
+        const getOrder = (item) => {
+            const st = item?.metadata?.sectionType || '';
+            const idx = PINNED_TIER_ORDER.indexOf(st);
+            return idx >= 0 ? idx : PINNED_TIER_ORDER.length;
+        };
+        return getOrder(a) - getOrder(b);
+    });
+
     legacyNoScene.sort((a, b) => (Number(b?.score) || 0) - (Number(a?.score) || 0));
 
-    const ordered = [...superseding];
-    const usedScenes = new Set();
+    // --- Assemble three-tier output ---
+    const ordered = [];
 
-    const sceneLeads = [...results]
-        .filter(item => !!item?.metadata?.sceneCode)
-        .sort((a, b) => getFreshnessEndIndex(a) - getFreshnessEndIndex(b));
+    // Tier 1: Superseding
+    ordered.push(...superseding);
 
-    for (const item of sceneLeads) {
-        const sceneCode = item?.metadata?.sceneCode || null;
-        if (!sceneCode || usedScenes.has(sceneCode)) continue;
-        usedScenes.add(sceneCode);
-        ordered.push(...(sceneBuckets.get(sceneCode) || []));
+    // Tier 2: Cumulative (chronological by scene code)
+    for (const sceneCode of sortedSceneCodes) {
+        const items = cumulativeByScene.get(sceneCode) || [];
+        if (items.length > 0) {
+            ordered.push(...items);
+        }
     }
-
     ordered.push(...cumulativeNoScene);
-    ordered.push(...rolling);
+
+    // Tier 3: Pinned (rolling + developments + anchors)
+    ordered.push(...pinned);
+
+    // Legacy at the very end
     ordered.push(...legacyNoScene);
+
     return dedupeResultsWithMeta(ordered).items;
 }
 
@@ -289,7 +959,23 @@ function applyImportanceBoost(results) {
  * @returns {string}
  */
 function formatInjectionText(template, results) {
-    const lines = (results || []).map(item => String(item?.text || '').trim()).filter(Boolean);
+    const lines = [];
+    let lastSceneCode = null;
+
+    for (const item of (results || [])) {
+        const text = String(item?.text || '').trim();
+        if (!text) continue;
+
+        // Add scene code group header for cumulative chunks
+        const sceneCode = item?.metadata?.sceneCode || null;
+        if (sceneCode && item?.metadata?.chunkBehavior === 'cumulative' && sceneCode !== lastSceneCode) {
+            lines.push(`Timeline [${sceneCode}]`);
+            lastSceneCode = sceneCode;
+        }
+
+        lines.push(text);
+    }
+
     if (lines.length === 0) return '';
 
     const textBlock = lines.join('\n\n');
@@ -597,6 +1283,70 @@ async function fetchLatestSuperseding(collectionId, rag) {
 }
 
 /**
+ * Explicitly fetch rolling chunks and keep latest per sectionType|entityKey.
+ * Keep aligned with retrieval.js helper.
+ * @param {string} collectionId
+ * @param {Object} rag
+ * @param {number} [limit=50]
+ * @returns {Promise<{items: Array<Object>, fetchedCount: number, hasMore: boolean}>}
+ */
+async function fetchLatestRolling(collectionId, rag, limit = 50) {
+    try {
+        const safeLimit = Math.max(1, Number(limit) || 50);
+        const { items, hasMore } = await listChunks(collectionId, rag, {
+            limit: safeLimit,
+            metadataFilter: { chunkBehavior: 'rolling' },
+        });
+
+        const safeItems = Array.isArray(items) ? items : [];
+        return {
+            items: dedupeLatestRolling(safeItems),
+            fetchedCount: safeItems.length,
+            hasMore: !!hasMore,
+        };
+    } catch (error) {
+        console.warn('[SummarySharder:RAG] Debug fallback rolling fetch failed:', error?.message || error);
+        return {
+            items: [],
+            fetchedCount: 0,
+            hasMore: false,
+        };
+    }
+}
+
+/**
+ * Explicitly fetch cumulative chunks and keep latest anchors by anchor key.
+ * Keep aligned with retrieval.js helper.
+ * @param {string} collectionId
+ * @param {Object} rag
+ * @param {number} [limit=50]
+ * @returns {Promise<{items: Array<{key: string, text: string, freshness: number, score: number}>, fetchedCount: number, hasMore: boolean}>}
+ */
+async function fetchLatestAnchors(collectionId, rag, limit = 50) {
+    try {
+        const safeLimit = Math.max(1, Number(limit) || 50);
+        const { items, hasMore } = await listChunks(collectionId, rag, {
+            limit: safeLimit,
+            metadataFilter: { chunkBehavior: 'cumulative' },
+        });
+
+        const safeItems = Array.isArray(items) ? items : [];
+        return {
+            items: collectLatestAnchors(safeItems),
+            fetchedCount: safeItems.length,
+            hasMore: !!hasMore,
+        };
+    } catch (error) {
+        console.warn('[SummarySharder:RAG] Debug fallback anchors fetch failed:', error?.message || error);
+        return {
+            items: [],
+            fetchedCount: 0,
+            hasMore: false,
+        };
+    }
+}
+
+/**
  * Full retrieval simulation without prompt injection.
  * @param {Object} overrides
  * @returns {Promise<Object>}
@@ -623,6 +1373,18 @@ export async function runDebugPipeline(overrides = {}) {
     const baseMeta = {
         scoringMethod: rag.scoringMethod || 'keyword',
         sceneExpansion: rag.sceneExpansion !== false,
+    };
+    const rollingPinState = {
+        items: [],
+        compactedItems: [],
+        fetchedCount: 0,
+        hasMore: false,
+    };
+    const anchorsPinState = {
+        items: [],
+        compactedItems: [],
+        fetchedCount: 0,
+        hasMore: false,
     };
 
     let sourceResults = [];
@@ -741,6 +1503,70 @@ export async function runDebugPipeline(overrides = {}) {
         };
     }, baseMeta);
 
+    working = await runStage(stages, 'rollingFallback', working, async (input) => {
+        if (!isSharder) {
+            rollingPinState.items = [];
+            rollingPinState.compactedItems = [];
+            rollingPinState.fetchedCount = 0;
+            rollingPinState.hasMore = false;
+            return { results: input, metadata: { skipped: true } };
+        }
+
+        const queryRolling = dedupeLatestRolling(input);
+        const fallback = await fetchLatestRolling(shardCollectionId, rag, 50);
+        const pinned = mergeLatestRolling(queryRolling, fallback.items);
+
+        rollingPinState.items = pinned;
+        rollingPinState.compactedItems = compactRollingPinnedChunks(pinned, rag);
+        rollingPinState.fetchedCount = fallback.fetchedCount;
+        rollingPinState.hasMore = fallback.hasMore;
+
+        return {
+            results: input,
+            metadata: {
+                skipped: false,
+                queryRollingCount: queryRolling.length,
+                fallbackFetchedCount: fallback.fetchedCount,
+                fallbackHasMore: fallback.hasMore,
+                pinnedRollingCount: pinned.length,
+                pinnedRollingCompactedCount: rollingPinState.compactedItems.length,
+                rollingKeysCovered: pinned.map(getRollingKey).filter(Boolean),
+            },
+        };
+    }, baseMeta);
+
+    working = await runStage(stages, 'anchorsFallback', working, async (input) => {
+        if (!isSharder) {
+            anchorsPinState.items = [];
+            anchorsPinState.compactedItems = [];
+            anchorsPinState.fetchedCount = 0;
+            anchorsPinState.hasMore = false;
+            return { results: input, metadata: { skipped: true } };
+        }
+
+        const queryAnchors = collectLatestAnchors(input);
+        const fallback = await fetchLatestAnchors(shardCollectionId, rag, 50);
+        const pinned = mergeLatestAnchors(queryAnchors, fallback.items);
+
+        anchorsPinState.items = pinned;
+        anchorsPinState.compactedItems = compactAnchorsPinnedChunks(pinned, rag);
+        anchorsPinState.fetchedCount = fallback.fetchedCount;
+        anchorsPinState.hasMore = fallback.hasMore;
+
+        return {
+            results: input,
+            metadata: {
+                skipped: false,
+                queryAnchorsCount: queryAnchors.length,
+                fallbackFetchedCount: fallback.fetchedCount,
+                fallbackHasMore: fallback.hasMore,
+                pinnedAnchorsCount: pinned.length,
+                pinnedAnchorsCompactedCount: anchorsPinState.compactedItems.length,
+                anchorKeysCovered: pinned.map(entry => entry.key).filter(Boolean),
+            },
+        };
+    }, baseMeta);
+
     working = await runStage(stages, 'contextDedup', working, async (input) => {
         const deduped = dedupeAgainstRecentContextWithMeta(input, chat, rag.protectCount);
         return {
@@ -831,6 +1657,58 @@ export async function runDebugPipeline(overrides = {}) {
     working = await runStage(stages, 'sceneGrouping', working, async (input) => ({
         results: orderWithSceneGrouping(input),
     }), baseMeta);
+
+    working = await runStage(stages, 'rollingPin', working, async (input) => {
+        if (!isSharder || rollingPinState.compactedItems.length === 0) {
+            return {
+                results: input,
+                metadata: {
+                    skipped: true,
+                    pinnedRollingCount: 0,
+                },
+            };
+        }
+
+        const withoutRolling = input.filter(item => item?.metadata?.chunkBehavior !== 'rolling');
+        const combined = dedupeResultsWithMeta([...withoutRolling, ...rollingPinState.compactedItems]);
+        return {
+            results: combined.items,
+            metadata: {
+                skipped: false,
+                pinnedRollingCount: rollingPinState.items.length,
+                pinnedRollingCompactedCount: rollingPinState.compactedItems.length,
+                fallbackFetchedCount: rollingPinState.fetchedCount,
+                fallbackHasMore: rollingPinState.hasMore,
+                ...combined.metadata,
+            },
+        };
+    }, baseMeta);
+
+    working = await runStage(stages, 'anchorsPin', working, async (input) => {
+        if (!isSharder || anchorsPinState.compactedItems.length === 0) {
+            return {
+                results: input,
+                metadata: {
+                    skipped: true,
+                    pinnedAnchorsCount: 0,
+                },
+            };
+        }
+
+        const stripped = stripAnchorsFromCumulativeResults(input);
+        const combined = dedupeResultsWithMeta([...stripped, ...anchorsPinState.compactedItems]);
+        return {
+            results: combined.items,
+            metadata: {
+                skipped: false,
+                pinnedAnchorsCount: anchorsPinState.items.length,
+                pinnedAnchorsCompactedCount: anchorsPinState.compactedItems.length,
+                fallbackFetchedCount: anchorsPinState.fetchedCount,
+                fallbackHasMore: anchorsPinState.hasMore,
+                ...combined.metadata,
+            },
+        };
+    }, baseMeta);
 
     const formatInput = working;
     await runStage(stages, 'formatInjection', formatInput, async (input) => ({
