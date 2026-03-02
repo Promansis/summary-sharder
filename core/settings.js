@@ -154,18 +154,6 @@ export function getDefaultSettings() {
                 messageFormat: 'minimal',
                 removeStopStrings: false
             },
-            chatManager: {
-                useSillyTavernAPI: false,
-                apiConfigId: null,
-                connectionProfileId: null,
-                queueDelayMs: 0,
-                temperature: 0.3,
-                topP: 1,
-                maxTokens: 4096,
-                postProcessing: '',
-                messageFormat: 'minimal',
-                removeStopStrings: false
-            }
         },
 
         // Floating Action Button settings
@@ -472,14 +460,9 @@ export function migrateSettings(settings) {
         migrated = true;
     }
 
-    // Add chatManager to apiFeatures if missing (for existing installations)
-    if (settings.apiFeatures && !settings.apiFeatures.chatManager) {
-        settings.apiFeatures.chatManager = {
-            useSillyTavernAPI: settings.apiFeatures.summary?.useSillyTavernAPI ?? false,
-            apiConfigId: settings.apiFeatures.summary?.apiConfigId || null,
-            connectionProfileId: settings.apiFeatures.summary?.connectionProfileId || null
-        };
-        console.log('[SummarySharder] Added chatManager to apiFeatures (inheriting from summary settings)');
+    // Remove legacy chatManager from apiFeatures (now uses summary API)
+    if (settings.apiFeatures?.chatManager) {
+        delete settings.apiFeatures.chatManager;
         migrated = true;
     }
 
@@ -508,12 +491,11 @@ export function migrateSettings(settings) {
         const defaults = {
             summary: { temperature: 0.4, topP: 1, maxTokens: 8096 },
             events: { temperature: 0.4, topP: 1, maxTokens: 4096 },
-            chatManager: { temperature: 0.3, topP: 1, maxTokens: 4096 },
             sharder: { temperature: 0.25, topP: 1, maxTokens: 8096 }
         };
 
         let needsMigration = false;
-        for (const feature of ['summary', 'events', 'chatManager', 'sharder']) {
+        for (const feature of ['summary', 'events', 'sharder']) {
             if (settings.apiFeatures[feature]) {
                 const cfg = settings.apiFeatures[feature];
                 const def = defaults[feature];

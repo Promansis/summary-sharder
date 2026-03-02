@@ -11,14 +11,13 @@ import { getApiKeyForConfig, getConfigById } from './legacy-api-config.js';
 const DEFAULT_GENERATION_PARAMS = {
     summary: { temperature: 0.4, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
     sharder: { temperature: 0.25, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
-    events: { temperature: 0.4, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
-    chatManager: { temperature: 0.3, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false }
+    events: { temperature: 0.4, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false }
 };
 
 /**
  * Get effective API settings for a specific feature
  * @param {Object} settings - Extension settings
- * @param {string} feature - Feature name ('summary', 'sharder', 'events', 'chatManager')
+ * @param {string} feature - Feature name ('summary', 'sharder', 'events')
  * @returns {Promise<{useSillyTavernAPI: boolean, useConnectionProfile: boolean, connectionProfileId: string|null, apiUrl: string, apiKey: string, selectedModel: string, temperature: number, topP: number, maxTokens: number, queueDelayMs: number, removeStopStrings: boolean}>}
  * @throws {Error} If API is not configured for the feature
  */

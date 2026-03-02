@@ -165,8 +165,7 @@ export async function saveToChat(characterId, chatFileName, messages) {
  * @returns {Promise<string>} API response
  */
 export async function callChatManagerAPI(settings, systemPrompt, userPrompt) {
-    // Get effective API settings for chatManager feature
-    const effectiveSettings = await getFeatureApiSettings(settings, 'chatManager');
+    const effectiveSettings = await getFeatureApiSettings(settings, 'summary');
 
     // Use per-feature generation settings
     const options = {
