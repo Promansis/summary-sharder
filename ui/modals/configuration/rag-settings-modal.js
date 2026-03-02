@@ -31,8 +31,8 @@ import {
     vectorizeAllStandardSummaries,
     purgeCollection,
 } from '../../../core/rag/index.js';
+import { ragLog } from '../../../core/logger.js';
 
-const LOG_PREFIX = '[SummarySharder:RAG]';
 const HYBRID_WEIGHT_STEP = 0.05;
 const HYBRID_WEIGHT_DEFAULT_ALPHA = 0.4;
 const HYBRID_WEIGHT_DEFAULT_BETA = 0.6;
@@ -1026,7 +1026,7 @@ async function runStatusChecks(ragDraft) {
 
         setControlState(!plugin.available);
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Status check failed:`, error?.message || error);
+        ragLog.warn('Status check failed:', error?.message || error);
         if (warningEl) {
             warningEl.classList.remove('ss-hidden');
             warningEl.textContent = `Status check failed: ${error?.message || error}`;

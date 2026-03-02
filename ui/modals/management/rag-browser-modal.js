@@ -19,8 +19,7 @@ import {
     setCollectionAlias,
 } from '../../../core/rag/index.js';
 import { saveSettings } from '../../../core/settings.js';
-
-const LOG_PREFIX = '[SummarySharder:RAG]';
+import { ragLog } from '../../../core/logger.js';
 const GROUP_SCAN_LIMIT = 1000;
 const PAGE_SIZE_OPTIONS = [20, 50, 100];
 
@@ -92,7 +91,7 @@ function getChatLabel(state, chatId) {
 async function discoverChatsWithVectors(settings, ragSettings, currentChatId, onProgress) {
     const character = characters?.[this_chid];
     if (!character) {
-        console.warn(`${LOG_PREFIX} Character not found for chat discovery.`);
+        ragLog.warn('Character not found for chat discovery.');
         return [];
     }
 
@@ -115,7 +114,7 @@ async function discoverChatsWithVectors(settings, ragSettings, currentChatId, on
 
         chats = Object.values(data);
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Chat discovery failed:`, error?.message || error);
+        ragLog.warn('Chat discovery failed:', error?.message || error);
         return [];
     }
 
@@ -167,7 +166,7 @@ async function discoverChatsWithVectors(settings, ragSettings, currentChatId, on
                     selectedChatId = candidate;
                 }
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Failed to read stats for chat ${candidate}:`, error?.message || error);
+                ragLog.warn(`Failed to read stats for chat ${candidate}:`, error?.message || error);
             }
         }
 
@@ -598,7 +597,7 @@ async function runQuery(state, dom) {
                     count: Array.isArray(items) ? items.length : 0,
                 });
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Scene expansion preview failed for ${sceneCode}:`, error?.message || error);
+                ragLog.warn(`Scene expansion preview failed for ${sceneCode}:`, error?.message || error);
             }
         }
     }
@@ -866,7 +865,7 @@ export async function openRagBrowserModal(settings) {
     try {
         currentCollectionId = getActiveCollectionId(currentChatId, settingsNoAlias);
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Failed to resolve current collection:`, error?.message || error);
+        ragLog.warn('Failed to resolve current collection:', error?.message || error);
     }
 
     const state = {
@@ -945,7 +944,7 @@ export async function openRagBrowserModal(settings) {
                     await refreshSceneView(state, dom);
                 }
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Browser refresh failed:`, error?.message || error);
+                ragLog.warn('Browser refresh failed:', error?.message || error);
                 toastr.error(`RAG browser refresh failed: ${error?.message || error}`);
             }
         };
@@ -1044,7 +1043,7 @@ export async function openRagBrowserModal(settings) {
             try {
                 await runQuery(state, dom);
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Test query failed:`, error?.message || error);
+                ragLog.warn('Test query failed:', error?.message || error);
                 toastr.error(`Test query failed: ${error?.message || error}`);
             } finally {
                 dom.runQueryBtn.disabled = false;
@@ -1120,7 +1119,7 @@ export async function openRagBrowserModal(settings) {
                 toastr.success(`Copied ${progress.copied}/${progress.total || progress.copied} chunks to ${targetLabel}`);
                 await refreshEverything();
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Copy failed:`, error?.message || error);
+                ragLog.warn('Copy failed:', error?.message || error);
                 toastr.error(`Copy failed: ${error?.message || error}`);
             } finally {
                 dom.linkBtn.disabled = false;
@@ -1170,7 +1169,7 @@ export async function openRagBrowserModal(settings) {
                 }
             }
         } catch (error) {
-            console.warn(`${LOG_PREFIX} Failed to populate chat selector:`, error?.message || error);
+            ragLog.warn('Failed to populate chat selector:', error?.message || error);
             if (dom.chatSelect) {
                 dom.chatSelect.innerHTML = '<option value="">Failed to load chats</option>';
                 dom.chatSelect.disabled = true;

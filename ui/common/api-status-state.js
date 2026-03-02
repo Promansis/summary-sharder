@@ -26,11 +26,11 @@ export function updateApiStatusDisplays(settings) {
         singlePassDisplay.textContent = getFeatureApiDisplayString(settings, 'sharder');
     }
 
-    // Update Events API display (visible if advancedUserControl enabled)
+    // Update Casing API display (visible if advancedUserControl enabled)
     const eventsStatus = document.getElementById('ss-events-api-status');
     const eventsDisplay = document.getElementById('ss-events-api-display');
     if (eventsStatus && eventsDisplay) {
         eventsStatus.classList.toggle('ss-hidden', !settings.advancedUserControl);
-        eventsDisplay.textContent = getFeatureApiDisplayString(settings, 'events');
+        eventsDisplay.textContent = getFeatureApiDisplayString(settings, 'casing');
     }
 }

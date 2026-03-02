@@ -4,6 +4,7 @@
 
 import { ConnectionManagerRequestService } from '../../../../shared.js';
 import { getRequestHeaders } from '../../../../../../script.js';
+import { log } from '../logger.js';
 import { chat_completion_sources } from '../../../../../openai.js';
 import { textgen_types } from '../../../../../textgen-settings.js';
 import { SECRET_KEYS } from '../../../../../secrets.js';
@@ -215,7 +216,7 @@ async function withProfileSecret(profile, selectedApiMap, run) {
                 try {
                     await rotateSecretRaw(secretKey, activeSecretId);
                 } catch (restoreError) {
-                    console.error('[SummarySharder] Failed to restore previously active secret:', restoreError);
+                    log.error('Failed to restore previously active secret:', restoreError);
                 }
             }
         }
@@ -281,7 +282,7 @@ export function getConnectionProfiles() {
             }))
             .filter(group => group.profiles.length > 0);
     } catch (error) {
-        console.warn('[SummarySharder] Failed to load Connection Manager profiles:', error);
+        log.warn('Failed to load Connection Manager profiles:', error);
         return [];
     }
 }
@@ -362,3 +363,4 @@ export async function callConnectionProfileAPI(profileId, systemPrompt, userProm
 
     return content;
 }
+

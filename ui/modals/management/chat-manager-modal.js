@@ -18,6 +18,7 @@ import { getSystemMessageByType } from '../../../../../../../scripts/system-mess
 import { refreshMultipleLorebooksUI } from '../../../core/processing/lorebook-refresh.js';
 import { loadChatContent, deleteChat, exportChatJSON, buildRawTextExport, saveToChat, callChatManagerAPI } from '../../../core/api/chat-manager-api.js';
 import { showSsConfirm } from '../../common/modal-base.js';
+import { log } from '../../../core/logger.js';
 
 // Store dropdown instances for cleanup
 let characterDropdown = null;
@@ -86,7 +87,7 @@ async function showExportModal(characterId, chatFileName) {
             toastr.success('Chat exported as text');
         }
     } catch (error) {
-        console.error('[SummarySharder] Export failed:', error);
+        log.error('Export failed:', error);
         toastr.error(`Export failed: ${error.message}`);
     }
 }
@@ -403,7 +404,7 @@ async function runSummarizationFromModal(sourceCharId, sourceChatFile, messages,
         toastr.success('Summarization complete!');
     } catch (error) {
         toastr.clear(progressToast);
-        console.error('[SummarySharder] Summarization failed:', error);
+        log.error('Summarization failed:', error);
         toastr.error(`Summarization failed: ${error.message}`);
     }
 }
@@ -422,7 +423,7 @@ async function injectIntoCurrentChat(summary, startIndex, endIndex, injectionPos
 
     if (!context || !context.chat) {
         toastr.warning('Could not access current chat');
-        console.log('=== SUMMARY OUTPUT ===\n', formattedContent);
+        log.log('=== SUMMARY OUTPUT ===\n', formattedContent);
         return {
             didInjectToContext: false,
             outputUID: null,
@@ -500,7 +501,7 @@ async function injectIntoCurrentChat(summary, startIndex, endIndex, injectionPos
         saveChatRanges(ranges);
     }
 
-    console.log(`[SummarySharder] Inserted summary into current chat at position ${insertionIndex}`);
+    log.log(`Inserted summary into current chat at position ${insertionIndex}`);
     return {
         didInjectToContext: true,
         outputUID: systemMessage.send_date || null,
@@ -577,7 +578,7 @@ async function saveToLorebookFromModal(summary, startIndex, endIndex, settings, 
             savedCount++;
             successfulSaves.push(bookName);  // Track successful saves
         } catch (error) {
-            console.error(`[SummarySharder] Failed to save to ${bookName}:`, error);
+            log.error(`Failed to save to ${bookName}:`, error);
         }
     }
 
@@ -661,7 +662,7 @@ async function injectIntoSpecificChat(summary, startIndex, endIndex, targetCharI
         // Save message insertion first; apply metadata range changes only after insertion save succeeds.
         await saveToChat(targetCharId, targetChatFile, chatData);
     } catch (error) {
-        console.error('[SummarySharder] Failed to inject into chat:', error);
+        log.error('Failed to inject into chat:', error);
         toastr.error(`Failed to inject: ${error.message}`);
         return {
             didInjectToContext: false,
@@ -687,7 +688,7 @@ async function injectIntoSpecificChat(summary, startIndex, endIndex, targetCharI
             }
         }
     } catch (error) {
-        console.warn('[SummarySharder] Summary inserted but target metadata update failed:', error);
+        log.warn('Summary inserted but target metadata update failed:', error);
     }
 
     toastr.success(`Summary injected into ${targetChatFile.replace('.jsonl', '')} at position ${insertionIndex}`);
@@ -796,7 +797,7 @@ export async function openChatManagerModal(settings) {
                         await chatDropdown.loadChatsForCharacter(selectedCharId);
                     }
                 } catch (error) {
-                    console.error('[SummarySharder] Delete failed:', error);
+                    log.error('Delete failed:', error);
                     toastr.error(`Delete failed: ${error.message}`);
                 }
             }

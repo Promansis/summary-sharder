@@ -1,3 +1,5 @@
+import { log } from '../../core/logger.js';
+
 const PANEL_ORDER = ['actions', 'config', 'advanced'];
 const PANEL_TITLES = {
     actions: 'Actions',
@@ -53,9 +55,7 @@ function recordFabPanelsPerfSample(metric, value) {
     const sorted = [...state.samples].sort((a, b) => a - b);
     const p50 = getPercentile(sorted, 0.5);
     const p95 = getPercentile(sorted, 0.95);
-    console.debug(
-        `[SummarySharder][FAB panels perf] ${metric} n=${state.samples.length} p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${state.max.toFixed(1)}ms`
-    );
+    log.debug(`[FAB panels perf] ${metric} n=${state.samples.length} p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${state.max.toFixed(1)}ms`);
 }
 
 function getPercentile(sortedValues, fraction) {

@@ -5,8 +5,7 @@
 
 import { tokenizeAndStem } from './stemmer.js';
 import { getFreshnessEndIndex } from './retrieval-shared.js';
-
-const LOG_PREFIX = '[SummarySharder:RAG]';
+import { ragLog } from '../logger.js';
 
 const WORD_RE = /[a-z0-9][a-z0-9'_\-]*/gi;
 const STOP_WORDS = new Set([
@@ -284,7 +283,7 @@ export function scoreAndRank(results, queryText, settings) {
     scored = applyFreshnessBoost(scored, rag);
     scored = sortByScore(scored);
 
-    console.debug(`${LOG_PREFIX} scoreAndRank complete`, {
+    ragLog.debug('scoreAndRank complete', {
         method,
         count: scored.length,
     });

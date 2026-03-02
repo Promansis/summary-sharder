@@ -6,8 +6,8 @@
 import { eventSource, event_types } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
 import { purgeCollection } from './vector-client.js';
+import { ragLog } from '../logger.js';
 
-const LOG_PREFIX = '[SummarySharder:RAG]';
 const SHARD_PREFIX = 'ss_shards_';
 const STANDARD_PREFIX = 'ss_standard_';
 
@@ -101,7 +101,7 @@ export function setCollectionAlias(chatId, sourceChatId) {
 export function getShardCollectionId(chatId) {
     const id = chatId || getCurrentChatId();
     if (!id) {
-        throw new Error(`${LOG_PREFIX} No chat ID available for shard collection`);
+        throw new Error('No chat ID available for shard collection');
     }
     return `${SHARD_PREFIX}${toSafeCollectionKey(id)}`;
 }
@@ -114,7 +114,7 @@ export function getShardCollectionId(chatId) {
 export function getStandardCollectionId(chatId) {
     const id = chatId || getCurrentChatId();
     if (!id) {
-        throw new Error(`${LOG_PREFIX} No chat ID available for standard collection`);
+        throw new Error('No chat ID available for standard collection');
     }
     return `${STANDARD_PREFIX}${toSafeCollectionKey(id)}`;
 }
@@ -148,13 +148,11 @@ export async function purgeAllCollections(chatId, ragSettings) {
         const safeKey = toSafeCollectionKey(chatId);
         const shardId = `${SHARD_PREFIX}${safeKey}`;
 
-        console.log(`${LOG_PREFIX} Purging shard collection for chat ${chatId}`);
-
         await purgeCollection(shardId, ragSettings);
 
-        console.log(`${LOG_PREFIX} Shard collection purged for chat ${chatId}`);
+        ragLog.log(`Shard collection purged for chat ${chatId}`);
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Error purging collections for chat ${chatId}:`, error.message);
+        ragLog.warn(`Error purging collections for chat ${chatId}:`, error.message);
     }
 }
 
@@ -169,7 +167,6 @@ export function initCollectionLifecycle() {
         const ragStdSettings = ss?.ragStandard;
 
         if (ragSettings?.enabled) {
-            console.log(`${LOG_PREFIX} Chat deleted: ${chatId}, cleaning up shard vector collection`);
             await purgeAllCollections(chatId, ragSettings);
         }
 
@@ -177,13 +174,13 @@ export function initCollectionLifecycle() {
             try {
                 const safeKey = toSafeCollectionKey(chatId);
                 const standardId = `${STANDARD_PREFIX}${safeKey}`;
-                console.log(`${LOG_PREFIX} Purging standard collection for chat ${chatId}`);
                 await purgeCollection(standardId, ragStdSettings);
+                ragLog.log(`Standard collection purged for chat ${chatId}`);
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Error purging standard collection for chat ${chatId}:`, error.message);
+                ragLog.warn(`Error purging standard collection for chat ${chatId}:`, error.message);
             }
         }
     });
 
-    console.log(`${LOG_PREFIX} Collection lifecycle initialized`);
+    ragLog.log('Collection lifecycle initialized');
 }

@@ -9,6 +9,7 @@ import { showSsInput } from '../common/modal-base.js';
 import { buildFabPanels, getFabPanelIds } from './fab-content.js';
 import { createFabPanels, WHEEL_RADIUS_PX, WHEEL_MAX_HALF_EXTENT_PX } from './fab-panels.js';
 import { createFabAnimator } from './fab-animation.js';
+import { log } from '../../core/logger.js';
 
 let fabElement = null;
 let settingsRef = null;
@@ -95,8 +96,8 @@ function recordFabPerfSample(metric, value) {
     const sorted = [...state.samples].sort((a, b) => a - b);
     const p50 = getPercentile(sorted, 0.5);
     const p95 = getPercentile(sorted, 0.95);
-    console.debug(
-        `[SummarySharder][FAB perf] ${metric} n=${state.samples.length} p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${state.max.toFixed(1)}ms`
+    log.debug(
+        `[FAB perf] ${metric} n=${state.samples.length} p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${state.max.toFixed(1)}ms`
     );
 }
 
@@ -1071,4 +1072,5 @@ export function destroyFab() {
     callbacksRef = null;
     isGenerating = false;
 }
+
 

@@ -5,10 +5,10 @@
 import { saveSettings } from '../settings.js';
 
 /**
- * Default Events Extraction Prompt
- * Used by Pre-Edit Events to extract discrete events from chat messages
+ * Default Casing Extraction Prompt
+ * Used by Drafting Mode to extract discrete events from chat messages
  */
-export const DEFAULT_EVENTS_PROMPT = `You are a precise narrative data extractor specializing in parsing roleplay transcripts into structured timeline events.
+export const DEFAULT_CASING_PROMPT = `You are a precise narrative data extractor specializing in parsing roleplay transcripts into structured timeline events.
 
 PROCESS: First, read the entire conversation to identify all scene transitions and major plot beats. Then, systematically extract events from start to finish.
 
@@ -65,20 +65,20 @@ Return ONLY a valid JSON array, no other text or explanation. Schema:
 SELF-VALIDATION: Before returning your output, verify that: the JSON is syntactically valid, events are in chronological order, startIndex â‰¤ endIndex for all events, and no required fields are missing.`;
 
 /**
- * Get the events extraction prompt (custom or default)
+ * Get the casing extraction prompt (custom or default)
  * @param {Object} settings - Extension settings
- * @returns {string} The events prompt to use
+ * @returns {string} The casing prompt to use
  */
-export function getEventsPrompt(settings) {
-    return settings.eventsPrompt?.trim() || DEFAULT_EVENTS_PROMPT;
+export function getCasingPrompt(settings) {
+    return settings.casingPrompt?.trim() || DEFAULT_CASING_PROMPT;
 }
 
 /**
- * Reset the events prompt to default
+ * Reset the casing prompt to default
  * @param {Object} settings - Extension settings
  */
-export function resetEventsPrompt(settings) {
-    settings.eventsPrompt = '';
+export function resetCasingPrompt(settings) {
+    settings.casingPrompt = '';
     saveSettings(settings);
 }
 

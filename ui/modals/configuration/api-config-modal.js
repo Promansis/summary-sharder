@@ -1,6 +1,6 @@
 /**
  * API Configuration Modal
- * Tabbed interface for configuring API settings per feature (Summary, Sharder, Pre-Edit Events)
+ * Tabbed interface for configuring API settings per feature (Summary, Sharder, Drafting Mode)
  */
 
 import { saveSettings } from '../../../core/settings.js';
@@ -9,11 +9,12 @@ import { getConnectionProfiles, isConnectionManagerAvailable } from '../../../co
 import { Popup, POPUP_TYPE } from '../../../../../../popup.js';
 import { updateApiStatusDisplays } from '../../common/api-status-state.js';
 import { createSegmentedToggle, infoHintHtml, mountInfoHints } from '../../common/index.js';
+import { log } from '../../../core/logger.js';
 
 /**
  * Render a single feature's API configuration tab
  * @param {Object} settings - Extension settings
- * @param {string} feature - Feature key ('summary', 'sharder', 'events')
+ * @param {string} feature - Feature key ('summary', 'sharder', 'casing')
  * @param {HTMLElement} container - Tab panel container
  */
 function renderFeatureTab(settings, feature, container) {
@@ -36,7 +37,7 @@ function renderFeatureTab(settings, feature, container) {
     const featureNames = {
         summary: 'Summary',
         sharder: 'Sharder',
-        events: 'Pre-Edit Events'
+        casing: 'Drafting Mode'
     };
     const featureName = featureNames[feature] || feature;
     const profileUnavailableTitle = 'Connection Manager extension is unavailable. Enable it in Extensions to use profile mode.';
@@ -270,7 +271,7 @@ function renderFeatureTab(settings, feature, container) {
         }
 
         saveSettings(settings);
-        console.log(`[SummarySharder] Updated ${feature} API config:`, settings.apiFeatures[feature]);
+        log.debug(`Updated ${feature} API config:`, settings.apiFeatures[feature]);
 
         // Update display in main UI
         updateApiStatusDisplays(settings);
@@ -317,7 +318,7 @@ function renderFeatureTab(settings, feature, container) {
         settings.apiFeatures[feature].removeStopStrings = removeStopStringsInput?.checked === true;
 
         saveSettings(settings);
-        console.log(`[SummarySharder] Updated ${feature} generation settings`);
+        log.debug(`Updated ${feature} generation settings`);
     };
 
     queueDelayInput?.addEventListener('change', saveGenerationSettings);
@@ -335,7 +336,7 @@ function renderFeatureTab(settings, feature, container) {
         settings.apiFeatures[feature].postProcessing = postProcessingSelect.value;
 
         saveSettings(settings);
-        console.log(`[SummarySharder] Updated ${feature} post-processing: ${postProcessingSelect.value || 'none'}`);
+        log.debug(`Updated ${feature} post-processing: ${postProcessingSelect.value || 'none'}`);
     });
 
     // Message format dropdown handler
@@ -350,7 +351,7 @@ function renderFeatureTab(settings, feature, container) {
             || 'minimal';
 
         saveSettings(settings);
-        console.log(`[SummarySharder] Updated ${feature} message format: ${settings.apiFeatures[feature].messageFormat}`);
+        log.debug(`Updated ${feature} message format: ${settings.apiFeatures[feature].messageFormat}`);
     });
 
     // Manage APIs button
@@ -389,13 +390,13 @@ export async function openApiConfigModal(settings) {
             <div class="ss-tab-header">
                 <button class="ss-tab-button active" data-tab="summary">Summary API</button>
                 <button class="ss-tab-button" data-tab="sharder">Sharder API</button>
-                <button class="ss-tab-button" data-tab="events">Events API</button>
+                <button class="ss-tab-button" data-tab="casing">Casing API</button>
             </div>
 
             <div class="ss-tab-content">
                 <div id="ss-api-tab-summary" class="ss-tab-panel active"></div>
                 <div id="ss-api-tab-sharder" class="ss-tab-panel"></div>
-                <div id="ss-api-tab-events" class="ss-tab-panel"></div>
+                <div id="ss-api-tab-casing" class="ss-tab-panel"></div>
             </div>
         </div>
     `;
@@ -421,12 +422,12 @@ export async function openApiConfigModal(settings) {
 
         const summaryPanel = modalContainer.querySelector('#ss-api-tab-summary');
         const sharderPanel = modalContainer.querySelector('#ss-api-tab-sharder');
-        const eventsPanel = modalContainer.querySelector('#ss-api-tab-events');
+        const casingPanel = modalContainer.querySelector('#ss-api-tab-casing');
 
         // Render initial tab content
         renderFeatureTab(settings, 'summary', summaryPanel);
         renderFeatureTab(settings, 'sharder', sharderPanel);
-        renderFeatureTab(settings, 'events', eventsPanel);
+        renderFeatureTab(settings, 'casing', casingPanel);
 
         // Tab switching
         modalContainer.querySelectorAll('.ss-tab-button').forEach(btn => {
@@ -438,3 +439,4 @@ export async function openApiConfigModal(settings) {
 
     await showPromise;
 }
+

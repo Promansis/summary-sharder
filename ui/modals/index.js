@@ -1,7 +1,7 @@
 export { openThemesModal, THEMES_MODAL_CSS } from './themes-modal.js';
 
 export { openSummaryReviewModal } from './summarization/summary-review-modal.js';
-export { openEventsModal } from './summarization/events-modal.js';
+export { openDraftingModal } from './summarization/drafting-modal.js';
 
 export { openApiConfigModal } from './configuration/api-config-modal.js';
 export { openSavedApisModal } from './configuration/saved-apis-modal.js';

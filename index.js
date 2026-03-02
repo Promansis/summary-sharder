@@ -15,6 +15,7 @@ import { POPUP_RESULT } from '../../../popup.js';
 import { showSsConfirm } from './ui/common/modal-base.js';
 
 // Core modules
+import { log } from './core/logger.js';
 import { getDefaultSettings, saveSettings, getChatRanges, saveChatRanges, migrateSettings, getActiveRagSettings } from './core/settings.js';
 import { ensureDefaultPrompt, getActivePrompt, ensureSharderPrompts } from './core/summarization/prompts.js';
 import { runSummarization, stopSummarization, setLastSummarizedIndexCallback } from './core/api/summary-api.js';
@@ -127,7 +128,6 @@ function setupVisibilityObserver() {
         subtree: true,
     });
 
-    console.log(`[${MODULE_NAME}] Visibility observer attached`);
 }
 
 
@@ -139,15 +139,10 @@ async function onExternalVisibilityChange() {
     const context = SillyTavern.getContext();
     if (!context?.chat) return;
 
-    console.log(`[${MODULE_NAME}] onExternalVisibilityChange triggered`);
-
     // Double-check guard flag (should not be true if we get here)
     if (getApplyingVisibility()) {
-        console.log(`[${MODULE_NAME}] Guard flag still set, skipping external visibility change`);
         return;
     }
-
-    console.log(`[${MODULE_NAME}] Detected external visibility change, syncing ranges...`);
 
     // Detect current hidden state from chat data
     const actuallyHidden = new Set();
@@ -165,13 +160,11 @@ async function onExternalVisibilityChange() {
 
     // Check if ranges match
     if (rangesMatch(currentRanges, detectedRanges)) {
-        console.log(`[${MODULE_NAME}] Ranges already in sync`);
         return;
     }
 
     // Update to match actual visibility
     saveChatRanges(detectedRanges);
-    console.log(`[${MODULE_NAME}] Ranges synchronized: ${detectedRanges.length} range(s)`);
 
     // Apply collapse styling to newly hidden messages (if enabled)
     applyCollapseToHiddenMessages(settings);
@@ -242,7 +235,7 @@ async function onNewMessage(messageId, messageType, sourceEventType = event_type
     }
 
     if (isAutoSummarizing) {
-        console.log(`[${MODULE_NAME}] Auto summarization already running, skipping trigger evaluation`);
+        log.log('Auto summarization already running, skipping');
         return;
     }
 
@@ -271,7 +264,7 @@ async function onNewMessage(messageId, messageType, sourceEventType = event_type
         return;
     }
 
-    console.log(`[${MODULE_NAME}] Auto-triggering summarization: messages ${startIdx} to ${currentIndex}`);
+    log.log(`Auto-triggering summarization: messages ${startIdx} to ${currentIndex}`);
     isAutoSummarizing = true;
 
     try {
@@ -312,14 +305,8 @@ async function onMessageDeleted(newChatLength) {
     const deletedIndex = findDeletedIndex(context.chat);
 
     if (deletedIndex >= 0) {
-        console.log(`[${MODULE_NAME}] Message deleted at index ${deletedIndex}`);
-
         // Use new range-operations module (handles visibility internally)
-        const rangesModified = await shiftRangesOnDelete(deletedIndex, deletedIndex);
-
-        if (rangesModified) {
-            console.log(`[${MODULE_NAME}] Ranges adjusted after deletion`);
-        }
+        await shiftRangesOnDelete(deletedIndex, deletedIndex);
 
         // Update lastSummarizedIndex if needed
         if (lastSummarizedIndex >= deletedIndex) {
@@ -340,14 +327,8 @@ async function onMessageDeleted(newChatLength) {
  * @param {number} insertedIndex - The index where a message was inserted
  */
 async function onMessageInserted(insertedIndex) {
-    console.log(`[${MODULE_NAME}] Message inserted at index ${insertedIndex}`);
-
     // Use new range-operations module (handles visibility internally)
-    const rangesModified = await shiftRangesOnInsert(insertedIndex, 1);
-
-    if (rangesModified) {
-        console.log(`[${MODULE_NAME}] Ranges adjusted after insertion`);
-    }
+    await shiftRangesOnInsert(insertedIndex, 1);
 
     // Update lastSummarizedIndex if needed
     if (lastSummarizedIndex >= insertedIndex) {
@@ -364,7 +345,7 @@ async function onMessageInserted(insertedIndex) {
 function onChatChanged() {
     const context = SillyTavern.getContext();
     const chatId = context?.chatId;
-    console.log(`[${MODULE_NAME}] Chat changed to: ${chatId}`);
+    log.log(`Chat changed to: ${chatId}`);
 
     lastSummarizedIndex = -1;
 
@@ -394,7 +375,7 @@ function onChatChanged() {
  * Initialize the extension
  */
 jQuery(async () => {
-    console.log(`[${MODULE_NAME}] Initializing...`);
+    log.log('Initializing...');
 
     // Load saved settings from extension_settings
     if (!extension_settings.summary_sharder) {
@@ -611,8 +592,8 @@ jQuery(async () => {
     // Register retrieval interceptor for generation pipeline.
     globalThis[GENERATE_INTERCEPTOR_KEY] = rearrangeChat;
     if (typeof globalThis[GENERATE_INTERCEPTOR_KEY] !== 'function') {
-        console.warn(
-            `[${MODULE_NAME}] Failed to register generation interceptor "${GENERATE_INTERCEPTOR_KEY}". ` +
+        log.warn(
+            `Failed to register generation interceptor "${GENERATE_INTERCEPTOR_KEY}". ` +
             `RAG retrieval will not run on send. Ensure manifest.generate_interceptor matches this key.`
         );
     }
@@ -623,6 +604,7 @@ jQuery(async () => {
         clearRagPromptInjection();
     }
 
-    console.log(`[${MODULE_NAME}] Initialized successfully`);
+    log.log('Initialized successfully');
 });
+
 

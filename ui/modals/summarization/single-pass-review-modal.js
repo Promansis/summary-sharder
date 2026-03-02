@@ -6,6 +6,7 @@
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../../../../popup.js';
 import { escapeHtml } from '../../common/ui-utils.js';
 import { archiveToWarm } from '../../../core/rag/archive.js';
+import { log } from '../../../core/logger.js';
 import {
     SHARDER_SECTIONS,
     parseExtractionResponse,
@@ -669,7 +670,7 @@ function setupCopyOutputHandler() {
                 toastr.success('Output copied');
             }
         } catch (err) {
-            console.error('[SummarySharder] Copy failed:', err);
+            log.error('Copy failed:', err);
             if (typeof toastr !== 'undefined') {
                 toastr.error('Copy failed');
             }
@@ -1213,7 +1214,7 @@ async function setupRegenerateHandler(state, regenFn) {
                 toastr.success('Regenerated successfully');
             }
         } catch (err) {
-            console.error('[SummarySharder] Regeneration failed:', err);
+            log.error('Regeneration failed:', err);
             if (typeof toastr !== 'undefined') {
                 toastr.error(`Regeneration failed: ${err.message}`);
             }

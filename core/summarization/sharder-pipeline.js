@@ -3,6 +3,7 @@
  */
 
 import { loadWorldInfo } from '../../../../../world-info.js';
+import { log } from '../logger.js';
 
 /**
  * Section definitions matching the extraction prompt section headers
@@ -790,7 +791,7 @@ export async function findSavedExtractions(settings, lorebookOverride = null) {
                 }
             });
         } catch (error) {
-            console.warn('[SummarySharder] Could not scan lorebook entries:', error);
+            log.warn('Could not scan lorebook entries:', error);
         }
     }
 
@@ -824,7 +825,7 @@ async function getWorldInfoEntries(settings, lorebookSelectionOverride = null) {
                     return true;
                 }
             } catch (error) {
-                console.warn(`[SummarySharder] Could not load lorebook "${bookName}":`, error);
+                log.warn(`Could not load lorebook "${bookName}":`, error);
             }
 
             return false;
@@ -873,8 +874,9 @@ async function getWorldInfoEntries(settings, lorebookSelectionOverride = null) {
             }
         }
     } catch (error) {
-        console.warn('[SummarySharder] Error getting world info entries:', error);
+        log.warn('Error getting world info entries:', error);
     }
 
     return entries;
 }
+

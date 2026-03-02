@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Analyze LLM-pruned content for sharder by comparing selected input shards
  * against sharder output sections.
  *
@@ -16,6 +16,7 @@ import {
     fuzzyMatch,
     isEmptyItem,
 } from '../summarization/shard-utils.js';
+import { log } from '../logger.js';
 
 /**
  * Maps consolidated-shard section keys to extraction-format section keys.
@@ -45,20 +46,20 @@ for (const s of SHARDER_SECTIONS) {
 }
 
 function getSectionMeta(key) {
-    return SECTION_META[key] || { key, name: String(key || 'UNKNOWN').toUpperCase(), emoji: 'ðŸ“‹' };
+    return SECTION_META[key] || { key, name: String(key || 'UNKNOWN').toUpperCase(), emoji: '📋' };
 }
 
 /**
  * Parse a shard's raw text into sections internally, dispatching to the
  * correct parser based on shard type.  This mirrors `parseInputSections`
- * in the consolidation analyzer â€” the key difference that eliminates the
+ * in the consolidation analyzer — the key difference that eliminates the
  * data-handoff failure point.
  */
 function parseShardContent(content, type) {
     if (!content) return {};
     // Detect actual content format rather than relying on header line.
     // sharder saves shards with a MEMORY SHARD header but uses
-    // extraction-style ### emoji headers â€” routing those to parseConsolidatedShard
+    // extraction-style ### emoji headers — routing those to parseConsolidatedShard
     // (which expects [BRACKET] headers) returns empty sections.
     const hasExtractionHeaders = /^###\s*\S/m.test(content);
     if (hasExtractionHeaders) {
@@ -100,7 +101,7 @@ function normalizeKey(sectionKey, isConsolidation) {
  * Analyze LLM-pruned content for sharder.
  *
  * @param {Array<{content:string, type:string, identifier:string}>} selectedShards
- *   Raw shard data â€” `content` is the full text, `type` is 'extraction' or 'consolidation'.
+ *   Raw shard data — `content` is the full text, `type` is 'extraction' or 'consolidation'.
  * @param {Object} outputSections
  *   Parsed sections from the sharder pipeline (extraction format, keyed by SHARDER_SECTIONS keys).
  * @returns {{totalPruned:number, sections:Array, sectionOverview:Array}}
@@ -113,11 +114,11 @@ export function analyzeSinglePassPruning(selectedShards, outputSections) {
     };
 
     if (!Array.isArray(selectedShards) || selectedShards.length === 0 || !outputSections) {
-        console.debug('[SummarySharder] sharder pruning: no shards or output to compare');
+        log.debug('sharder pruning: no shards or output to compare');
         return report;
     }
 
-    console.debug(`[SummarySharder] sharder pruning: analyzing ${selectedShards.length} shard(s)`);
+    log.debug(`sharder pruning: analyzing ${selectedShards.length} shard(s)`);
 
     // --- Phase 1: Parse all input shards internally and bucket items by extraction key ---
     const inputBySection = new Map();
@@ -128,11 +129,11 @@ export function analyzeSinglePassPruning(selectedShards, outputSections) {
         const isConsolidation = shardType === 'consolidation';
         const identifier = resolveIdentifier(rawContent, shard?.identifier);
 
-        // Parse internally â€” the critical difference from the old approach
+        // Parse internally — the critical difference from the old approach
         const parsed = parseShardContent(rawContent, shardType);
 
         if (!parsed || typeof parsed !== 'object') {
-            console.debug(`[SummarySharder] sharder pruning: parser returned nothing for "${identifier}"`);
+            log.debug(`sharder pruning: parser returned nothing for "${identifier}"`);
             continue;
         }
 
@@ -160,7 +161,8 @@ export function analyzeSinglePassPruning(selectedShards, outputSections) {
             }
         }
 
-        console.debug(`[SummarySharder] sharder pruning: "${identifier}" (${shardType}) â†’ ${shardItemCount} items`);
+        log.debug(`sharder pruning: "${identifier}" (${shardType}) ? ${shardItemCount} items`);
+
     }
 
     // --- Phase 2: Compare each section's input items against output items ---
@@ -201,8 +203,8 @@ export function analyzeSinglePassPruning(selectedShards, outputSections) {
 
         overviewEntry.prunedCount = prunedItems.length;
 
-        console.debug(
-            `[SummarySharder] sharder pruning: [${sectionKey}] input=${inputItems.length} output=${outputItems.length} pruned=${prunedItems.length}`
+        log.debug(
+            `sharder pruning: [${sectionKey}] input=${inputItems.length} output=${outputItems.length} pruned=${prunedItems.length}`
         );
 
         if (prunedItems.length > 0) {
@@ -219,8 +221,9 @@ export function analyzeSinglePassPruning(selectedShards, outputSections) {
         }
     }
 
-    console.debug(`[SummarySharder] sharder pruning: total pruned = ${report.totalPruned}`);
+    log.debug(`sharder pruning: total pruned = ${report.totalPruned}`);
 
     return report;
 }
+
 

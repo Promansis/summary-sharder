@@ -1,7 +1,7 @@
 import { getRequestHeaders } from '../../../../../../script.js';
 import { resolveRagRerankerApiKey } from './rag-secrets.js';
+import { ragLog } from '../logger.js';
 
-const LOG_PREFIX = '[SummarySharder:RAG]';
 const PLUGIN_RERANK_URL = '/api/plugins/similharity/rerank';
 
 function summarize(value, max = 120) {
@@ -221,7 +221,7 @@ export async function rerankDocuments(query, documents, ragSettings, options = {
             ranked: [...scored, ...unscored],
         };
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Re-ranker request failed:`, error?.message || error);
+        ragLog.warn('Re-ranker request failed:', error?.message || error);
         return buildPassthroughResult(safeDocs, mode, target, error?.message || String(error));
     }
 }

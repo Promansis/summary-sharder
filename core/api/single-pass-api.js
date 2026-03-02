@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Sharder orchestration for Summary Sharder.
  */
 
@@ -18,6 +18,7 @@ import {
     throwIfAborted
 } from './abort-controller.js';
 import { startUiOperation, endUiOperation } from './api-ui-helpers.js';
+import { log } from '../logger.js';
 
 let isSharderRunning = false;
 
@@ -250,7 +251,7 @@ export async function runSharder(startIndex, endIndex, settings, selectedShards 
             return;
         }
 
-        console.error('[SummarySharder] Sharder failed:', error);
+        log.error('Sharder failed:', error);
         toastr.error(`Sharder failed: ${error.message}`);
     } finally {
         if (progressToast) {
@@ -271,4 +272,5 @@ export async function runSharder(startIndex, endIndex, settings, selectedShards 
         isSharderRunning = false;
     }
 }
+
 

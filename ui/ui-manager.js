@@ -22,6 +22,7 @@ import { openBatchConfigModal } from './modals/summarization/batch-config-modal.
 import { showSsInput } from './common/modal-base.js';
 import { openApiConfigModal } from './modals/configuration/api-config-modal.js';
 import { updateApiStatusDisplays } from './common/api-status-state.js';
+import { log } from '../core/logger.js';
 import {
     createSegmentedToggle,
     createTagInput,
@@ -306,7 +307,7 @@ export function renderSettingsUI(settings, callbacks) {
                                         <span id="ss-single-pass-api-display" style="margin-left: 10px;"></span>
                                     </div>
                                     <div class="ss-api-feature-status ss-hidden" id="ss-events-api-status">
-                                        <strong>Events API:</strong>
+                                        <strong>Casing API:</strong>
                                         <span id="ss-events-api-display" style="margin-left: 10px;"></span>
                                     </div>
                                 </div>
@@ -388,7 +389,7 @@ export function renderSettingsUI(settings, callbacks) {
                                 <div id="ss-advanced-control-block" class="ss-block">
                                     <label class="checkbox_label">
                                         <input id="ss-advanced-control" type="checkbox" />
-                                        <span>Pre-Edit Events ${infoHintHtml('ss-pre-edit-events-hint', 'Extracts key events first so you can edit them before the summary is generated.')}</span>
+                                        <span>Drafting Mode ${infoHintHtml('ss-pre-edit-events-hint', 'Extracts key events first so you can edit them before the summary is generated.')}</span>
                                     </label>
                                     <p class="ss-hint">Extract and review events before generating summary</p>
                                 </div>
@@ -521,7 +522,7 @@ export function renderSettingsUI(settings, callbacks) {
 
     const container = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings');
     if (!container) {
-        console.error('[SummarySharder] Could not find extensions settings container');
+        log.error('Could not find extensions settings container');
         return;
     }
 
@@ -706,7 +707,7 @@ export function renderSettingsUI(settings, callbacks) {
             if (advancedControlEl) {
                 advancedControlEl.checked = false;
             }
-            toastr.info('Disabled Pre-Edit Events (use Sharder Mode instead)');
+            toastr.info('Disabled Drafting Mode (use Sharder Mode instead)');
             saveSettings(settings);
             updateApiStatusDisplays(settings);
             updateActivePromptDisplay(settings);
@@ -875,6 +876,5 @@ export function renderSettingsUI(settings, callbacks) {
     });
 
     updateActivePromptDisplay(settings);
-
-    console.log('[SummarySharder] UI rendered');
 }
+

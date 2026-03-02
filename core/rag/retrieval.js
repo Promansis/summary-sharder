@@ -10,6 +10,7 @@ import { rerankDocuments } from './reranker-client.js';
 import { hybridQuery, listChunks, queryChunks } from './vector-client.js';
 import { keywordBoost, runClientHybridFusion, scoreAndRank } from './scoring.js';
 import { getActiveRagSettings } from '../settings.js';
+import { ragLog } from '../logger.js';
 import {
     ANCHORS_SECTION_KEY,
     ANCHORS_SECTION_LABEL,
@@ -44,8 +45,6 @@ import {
 
 export const EXTENSION_PROMPT_TAG_SS = '5_summary_sharder_rag';
 
-const LOG_PREFIX = '[SummarySharder:RAG]';
-
 /** @type {Object|null} Last successful RAG injection snapshot. */
 let lastInjectionData = null;
 
@@ -66,19 +65,13 @@ const FALLBACK_CACHE_TTL = 30000; // 30 seconds
 export function invalidateFallbackCache(collectionId = null) {
     if (!collectionId) {
         fallbackCache.clear();
-        console.debug(`${LOG_PREFIX} Fallback cache cleared (all collections)`);
         return;
     }
 
-    let cleared = 0;
     for (const key of fallbackCache.keys()) {
         if (key.startsWith(`${collectionId}:`)) {
             fallbackCache.delete(key);
-            cleared++;
         }
-    }
-    if (cleared > 0) {
-        console.debug(`${LOG_PREFIX} Fallback cache cleared for collection: ${collectionId} (${cleared} entries)`);
     }
 }
 
@@ -232,7 +225,7 @@ export async function fetchLatestSuperseding(collectionId, rag) {
             items.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
             return items[0];
         } catch (error) {
-            console.warn(`${LOG_PREFIX} Fallback superseding fetch failed:`, error?.message || error);
+            ragLog.warn('Fallback superseding fetch failed:', error?.message || error);
             return null;
         }
     });
@@ -262,7 +255,7 @@ export async function fetchLatestRolling(collectionId, rag, limit = 50) {
                 hasMore: !!hasMore,
             };
         } catch (error) {
-            console.warn(`${LOG_PREFIX} Fallback rolling fetch failed:`, error?.message || error);
+            ragLog.warn('Fallback rolling fetch failed:', error?.message || error);
             return {
                 items: [],
                 fetchedCount: 0,
@@ -295,7 +288,7 @@ export async function fetchLatestAnchors(collectionId, rag, limit = 50) {
                 hasMore: !!hasMore,
             };
         } catch (error) {
-            console.warn(`${LOG_PREFIX} Fallback anchors fetch failed:`, error?.message || error);
+            ragLog.warn('Fallback anchors fetch failed:', error?.message || error);
             return {
                 items: [],
                 fetchedCount: 0,
@@ -328,7 +321,7 @@ export async function fetchLatestDevelopments(collectionId, rag, limit = 50) {
                 hasMore: !!hasMore,
             };
         } catch (error) {
-            console.warn(`${LOG_PREFIX} Fallback developments fetch failed:`, error?.message || error);
+            ragLog.warn('Fallback developments fetch failed:', error?.message || error);
             return {
                 items: [],
                 fetchedCount: 0,
@@ -524,7 +517,7 @@ async function expandByScene(settings, shardResults) {
                 if (expanded.length >= maxSceneExpansionChunks) break;
             }
         } catch (error) {
-            console.warn(`${LOG_PREFIX} Scene expansion failed for ${sceneCode}:`, error?.message || error);
+            ragLog.warn(`Scene expansion failed for ${sceneCode}:`, error?.message || error);
         }
     }
 
@@ -821,7 +814,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
                     merged = dedupeResults([...merged, ...latestItems]);
                 }
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Standard mode latest-fallback fetch failed:`, error?.message || error);
+                ragLog.warn('Standard mode latest-fallback fetch failed:', error?.message || error);
             }
         }
 
@@ -975,7 +968,8 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             mode: isSharder ? 'sharder' : 'standard',
         };
 
-        console.log(`${LOG_PREFIX} Retrieval complete`, {
+        ragLog.log(`Retrieval: ${merged.length} results (${shardResults.length} queried, reranker=${!!rerankMeta.metadata?.applied})`);
+        ragLog.debug('Retrieval details', {
             mode: isSharder ? 'sharder' : 'standard',
             backend: rag.backend,
             useNativeHybrid,
@@ -999,7 +993,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             finalResults: merged.length,
         });
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Retrieval failed:`, error?.message || error);
+        ragLog.warn('Retrieval failed:', error?.message || error);
         clearExtensionPrompt();
     }
 

@@ -10,6 +10,7 @@ import { chat } from '../../../../../../../script.js';
 import { parseRanges, mergeOverlappingRanges } from '../../../core/processing/utils.js';
 import { createTagInput, parseCommaTags, tagsToString } from '../../common/index.js';
 import { showSsConfirm, showSsInput } from '../../common/modal-base.js';
+import { log } from '../../../core/logger.js';
 
 /**
  * Render the list of ranges with controls
@@ -514,7 +515,7 @@ export async function openVisibilityModal(settings) {
     // If user clicked "Save & Exit", persist changes
     if (result === POPUP_RESULT.AFFIRMATIVE) {
         // DEBUG: Log what we're about to save
-        console.log('[SummarySharder] Visibility modal saving. Ranges:',
+        log.debug('Visibility modal saving. Ranges:',
             JSON.stringify(modalState.ranges.map(r => ({ start: r.start, end: r.end, hidden: r.hidden }))));
 
         // Save ranges
@@ -527,14 +528,14 @@ export async function openVisibilityModal(settings) {
         saveSettings(settings);
 
         // Apply visibility immediately
-        console.log('[SummarySharder] Calling applyVisibilitySettings...');
+        log.debug('Calling applyVisibilitySettings...');
         await applyVisibilitySettings(settings);
-        console.log('[SummarySharder] applyVisibilitySettings completed');
+        log.debug('applyVisibilitySettings completed');
 
         toastr.success('Visibility settings saved');
     } else {
         // User cancelled, no changes made
-        console.log('[SummarySharder] Visibility modal cancelled');
+        log.debug('Visibility modal cancelled');
     }
 }
 

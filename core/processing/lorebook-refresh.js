@@ -1,4 +1,5 @@
 import { reloadEditor } from '../../../../../world-info.js';
+import { log } from '../logger.js';
 
 /**
  * Refreshes the lorebook UI if the specified lorebook is currently open in the World Info editor.
@@ -9,16 +10,16 @@ import { reloadEditor } from '../../../../../world-info.js';
  */
 export function refreshLorebookUI(lorebookName) {
     if (!lorebookName) {
-        console.warn('[SummarySharder] Cannot refresh lorebook: name is null/undefined');
+        log.warn('Cannot refresh lorebook: name is null/undefined');
         return;
     }
 
     try {
         // reloadEditor only refreshes if the lorebook is currently selected
         reloadEditor(lorebookName, false);
-        console.log(`[SummarySharder] Refreshed lorebook UI for: ${lorebookName}`);
+        log.log(`Refreshed lorebook UI for: ${lorebookName}`);
     } catch (error) {
-        console.error(`[SummarySharder] Failed to refresh lorebook UI for ${lorebookName}:`, error);
+        log.error(`Failed to refresh lorebook UI for ${lorebookName}:`, error);
     }
 }
 
@@ -38,3 +39,4 @@ export function refreshMultipleLorebooksUI(lorebookNames) {
         refreshLorebookUI(name);
     }
 }
+

@@ -24,8 +24,7 @@ import {
     chunkProseSummary,
 } from './chunking.js';
 import { throwIfAborted } from '../api/abort-controller.js';
-
-const LOG_PREFIX = '[SummarySharder:RAG]';
+import { ragLog } from '../logger.js';
 
 const STOP_WORDS = new Set([
     'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
@@ -176,7 +175,7 @@ async function collectExistingShards(settings) {
                 }
             }
         } catch (error) {
-            console.warn(`${LOG_PREFIX} Failed loading lorebook "${book}" for bulk shard vectorization:`, error?.message || error);
+            ragLog.warn(`Failed loading lorebook "${book}" for bulk shard vectorization:`, error?.message || error);
         }
     }
 
@@ -231,7 +230,6 @@ export function buildSingleMessageChunk(message, messageIndex) {
  * @returns {Promise<{inserted: number, deleted: number, totalCurrent: number}>}
  */
 export async function synchronizeChatVectors(settings) {
-    console.debug(`${LOG_PREFIX} Raw chat vectorization is disabled; synchronizeChatVectors is a no-op`);
     return { inserted: 0, deleted: 0, totalCurrent: 0 };
 }
 
@@ -260,7 +258,7 @@ export async function vectorizeShard(shardText, startIdx, endIdx, settings, keyw
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, [chunk], ragSettings);
 
-    console.log(`${LOG_PREFIX} Vectorized shard ${startIdx}-${endIdx} into ${collectionId}`);
+    ragLog.log(`Vectorized shard ${startIdx}-${endIdx} into ${collectionId}`);
     return { inserted: result.inserted || 1, hash: String(chunk.hash) };
 }
 
@@ -408,7 +406,7 @@ export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, se
         inserted = result.inserted || toInsert.length;
     }
 
-    console.log(`${LOG_PREFIX} Section-aware vectorization ${startIdx}-${endIdx}: +${inserted}, -${deleteList.length}`);
+    ragLog.log(`Section-aware vectorization ${startIdx}-${endIdx}: +${inserted}, -${deleteList.length}`);
 
     return {
         inserted,
@@ -450,7 +448,7 @@ async function vectorizeAllShardsStandard(settings) {
 
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, toInsert, ragSettings);
-    console.log(`${LOG_PREFIX} Bulk vectorized shard collection ${collectionId}: +${result.inserted || toInsert.length}`);
+    ragLog.log(`Bulk vectorized shard collection ${collectionId}: +${result.inserted || toInsert.length}`);
 
     return {
         inserted: result.inserted || toInsert.length,
@@ -473,10 +471,6 @@ export async function cleanStaleVectors(collectionId, oldHash, settings) {
 
     const result = await deleteChunks(collectionId, [oldHash], ragSettings);
     const deleted = result.deleted || 0;
-
-    if (deleted > 0) {
-        console.log(`${LOG_PREFIX} Removed stale vector hash ${oldHash} from ${collectionId}`);
-    }
 
     return { deleted };
 }
@@ -574,7 +568,6 @@ export function extractKeywordsTfIdf(text, maxKeywords = 8) {
  * @returns {Promise<{inserted: number, hash: string|null}>}
  */
 export async function vectorizeSingleMessageAtIndex(messageIndex, settings) {
-    console.debug(`${LOG_PREFIX} Raw chat vectorization is disabled; vectorizeSingleMessageAtIndex is a no-op`);
     return { inserted: 0, hash: null };
 }
 
@@ -755,7 +748,7 @@ async function collectStandardShards(settings) {
                     }
                 }
             } catch (error) {
-                console.warn(`${LOG_PREFIX} Failed loading lorebook "${book}" for standard bulk vectorization:`, error?.message || error);
+                ragLog.warn(`Failed loading lorebook "${book}" for standard bulk vectorization:`, error?.message || error);
             }
         }
     }
@@ -790,7 +783,7 @@ export async function vectorizeStandardSummary(text, startIdx, endIdx, settings,
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, chunks, ragStd);
 
-    console.log(`${LOG_PREFIX} Vectorized standard summary ${startIdx}-${endIdx} into ${collectionId}`);
+    ragLog.log(`Vectorized standard summary ${startIdx}-${endIdx} into ${collectionId}`);
     return { inserted: result.inserted || chunks.length, hash: String(chunks[0].hash) };
 }
 
@@ -826,7 +819,7 @@ export async function vectorizeAllStandardSummaries(settings) {
 
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, toInsert, ragStd);
-    console.log(`${LOG_PREFIX} Bulk vectorized standard collection ${collectionId}: +${result.inserted || toInsert.length}`);
+    ragLog.log(`Bulk vectorized standard collection ${collectionId}: +${result.inserted || toInsert.length}`);
 
     return {
         inserted: result.inserted || toInsert.length,

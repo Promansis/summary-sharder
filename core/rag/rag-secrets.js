@@ -4,6 +4,7 @@
  */
 
 import { getRequestHeaders } from '../../../../../../script.js';
+import { ragLog } from '../logger.js';
 
 const SECRET_KEY = 'api_key_custom';
 const EMBEDDING_LABEL = 'Summary Sharder: RAG Embedding Key';
@@ -29,7 +30,7 @@ async function findSecretById(secretId) {
         const data = await response.json();
         return data?.value || null;
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Failed to read embedding secret:', error?.message || error);
+        ragLog.warn('Failed to read embedding secret:', error?.message || error);
         return null;
     }
 }
@@ -57,7 +58,7 @@ async function writeSecret(value, label = EMBEDDING_LABEL) {
         const data = await response.json();
         return data?.id || null;
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Failed to write embedding secret:', error?.message || error);
+        ragLog.warn('Failed to write embedding secret:', error?.message || error);
         return null;
     }
 }
@@ -77,7 +78,7 @@ async function deleteSecret(secretId) {
         });
         return response.ok;
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Failed to delete embedding secret:', error?.message || error);
+        ragLog.warn('Failed to delete embedding secret:', error?.message || error);
         return false;
     }
 }
@@ -99,7 +100,7 @@ async function getActiveCustomSecretId() {
         const active = secrets.find(s => s?.active === true);
         return active?.id || null;
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Failed to read active custom secret ID:', error?.message || error);
+        ragLog.warn('Failed to read active custom secret ID:', error?.message || error);
         return null;
     }
 }
@@ -119,7 +120,7 @@ async function restoreActiveCustomSecret(secretId) {
         });
         return response.ok;
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Failed to restore active custom secret:', error?.message || error);
+        ragLog.warn('Failed to restore active custom secret:', error?.message || error);
         return false;
     }
 }

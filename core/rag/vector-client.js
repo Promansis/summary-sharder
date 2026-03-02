@@ -8,8 +8,8 @@ import { getRequestHeaders } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
 import { resolveRagEmbeddingApiKey } from './rag-secrets.js';
 import { getAbortSignal, throwIfAborted } from '../api/abort-controller.js';
+import { ragLog } from '../logger.js';
 
-const LOG_PREFIX = '[SummarySharder:RAG]';
 const PLUGIN_BASE = '/api/plugins/similharity';
 
 /**
@@ -231,7 +231,7 @@ async function pluginFetch(endpoint, options = {}) {
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`${LOG_PREFIX} Plugin error (${response.status}): ${errorText}`);
+        throw new Error(`Plugin error (${response.status}): ${errorText}`);
     }
 
     return response.json();
@@ -250,7 +250,7 @@ export async function checkPluginAvailability() {
             version: data.version || 'unknown',
         };
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Plugin not available:`, error.message);
+        ragLog.warn('Plugin not available:', error.message);
         return { available: false, backends: [], version: '' };
     }
 }
@@ -480,7 +480,7 @@ export async function getEmbeddingSources() {
         const data = await pluginFetch('/sources');
         return { sources: data.sources || [] };
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Failed to get embedding sources:`, error.message);
+        ragLog.warn('Failed to get embedding sources:', error.message);
         return { sources: [] };
     }
 }

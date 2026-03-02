@@ -1,6 +1,6 @@
 ﻿/**
  * Feature-specific API configuration resolver
- * Centralizes API settings management across Summary, Sharder, Pre-Edit Events, and Chat Manager
+ * Centralizes API settings management across Summary, Sharder, Drafting Mode, and Chat Manager
  */
 
 import { getApiKeyForConfig, getConfigById } from './legacy-api-config.js';
@@ -11,13 +11,13 @@ import { getApiKeyForConfig, getConfigById } from './legacy-api-config.js';
 const DEFAULT_GENERATION_PARAMS = {
     summary: { temperature: 0.4, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
     sharder: { temperature: 0.25, topP: 1, maxTokens: 8096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false },
-    events: { temperature: 0.4, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false }
+    casing: { temperature: 0.4, topP: 1, maxTokens: 4096, queueDelayMs: 0, postProcessing: '', messageFormat: 'minimal', removeStopStrings: false }
 };
 
 /**
  * Get effective API settings for a specific feature
  * @param {Object} settings - Extension settings
- * @param {string} feature - Feature name ('summary', 'sharder', 'events')
+ * @param {string} feature - Feature name ('summary', 'sharder', 'casing')
  * @returns {Promise<{useSillyTavernAPI: boolean, useConnectionProfile: boolean, connectionProfileId: string|null, apiUrl: string, apiKey: string, selectedModel: string, temperature: number, topP: number, maxTokens: number, queueDelayMs: number, removeStopStrings: boolean}>}
  * @throws {Error} If API is not configured for the feature
  */
@@ -103,12 +103,12 @@ export async function getFeatureApiSettings(settings, feature) {
  * @returns {Promise<Object>} Legacy API settings
  */
 async function getLegacyApiSettings(settings, feature) {
-    // Events had alternate API support in legacy structure
-    if (feature === 'events' && settings.useAlternateEventsApi && settings.eventsApiConfigId) {
-        const config = getConfigById(settings, settings.eventsApiConfigId);
+    // Casing had alternate API support in legacy structure
+    if (feature === 'casing' && settings.useAlternateCasingApi && settings.casingApiConfigId) {
+        const config = getConfigById(settings, settings.casingApiConfigId);
 
         if (config) {
-            const apiKey = await getApiKeyForConfig(settings, settings.eventsApiConfigId);
+            const apiKey = await getApiKeyForConfig(settings, settings.casingApiConfigId);
 
             if (apiKey) {
                 return {
@@ -158,7 +158,7 @@ async function getLegacyApiSettings(settings, feature) {
 /**
  * Get display string for feature's current API configuration
  * @param {Object} settings - Extension settings
- * @param {string} feature - Feature name ('summary', 'sharder', 'events')
+ * @param {string} feature - Feature name ('summary', 'sharder', 'casing')
  * @returns {string} Display string (e.g., "SillyTavern Current" or "ConfigName - model")
  */
 export function getFeatureApiDisplayString(settings, feature) {
@@ -205,9 +205,9 @@ export function getFeatureApiDisplayString(settings, feature) {
  * @returns {string} Display string
  */
 function getLegacyApiDisplayString(settings, feature) {
-    // Events had alternate API support
-    if (feature === 'events' && settings.useAlternateEventsApi && settings.eventsApiConfigId) {
-        const config = getConfigById(settings, settings.eventsApiConfigId);
+    // Casing had alternate API support
+    if (feature === 'casing' && settings.useAlternateCasingApi && settings.casingApiConfigId) {
+        const config = getConfigById(settings, settings.casingApiConfigId);
         if (config) {
             return config.name;
         }

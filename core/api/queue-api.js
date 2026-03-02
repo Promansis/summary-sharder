@@ -12,6 +12,7 @@ import {
 } from './abort-controller.js';
 import { startUiOperation, updateUiOperation, endUiOperation } from './api-ui-helpers.js';
 import { runSummarization } from './summary-api.js';
+import { log } from '../logger.js';
 
 /**
  * Process multiple summarization ranges in a queue
@@ -103,12 +104,12 @@ export async function runSummarizationQueue(ranges, settings) {
             } catch (error) {
                 // If aborted, stop the entire queue immediately
                 if (error.name === 'AbortError') {
-                    console.log('[SummarySharder] Queue aborted by user');
+                    log.log('Queue aborted by user');
                     toastr.info('Summarization stopped');
                     return;
                 }
 
-                console.error(`[SummarySharder] Failed to summarize range ${range.start}-${range.end}:`, error);
+                log.error(`Failed to summarize range ${range.start}-${range.end}:`, error);
 
                 failed.push({
                     range: `${range.start}-${range.end}`,
@@ -158,4 +159,5 @@ export async function runSummarizationQueue(ranges, settings) {
 
     }
 }
+
 

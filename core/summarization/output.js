@@ -14,6 +14,7 @@ import { chat_metadata, characters, this_chid, saveChatConditional } from '../..
 import { findIndexByUID } from '../processing/utils.js';
 import { parseBannedKeywords, filterBannedKeywords } from '../processing/keyword-filter.js';
 import { refreshMultipleLorebooksUI } from '../processing/lorebook-refresh.js';
+import { log, ragLog } from '../logger.js';
 import {
     resolveShardChunkingMode,
     vectorizeShard,
@@ -89,7 +90,7 @@ export async function handleSummaryResult(
                         await vectorizeShard(summary, startIndex, endIndex, settings, extractedKeywords);
                     }
                 } catch (error) {
-                    console.warn('[SummarySharder:RAG] Failed to vectorize shard after summary save:', error?.message || error);
+                    ragLog.warn('Failed to vectorize shard after summary save:', error?.message || error);
                 }
             }
         } else {
@@ -98,7 +99,7 @@ export async function handleSummaryResult(
                 try {
                     await vectorizeStandardSummary(summary, startIndex, endIndex, settings, extractedKeywords);
                 } catch (error) {
-                    console.warn('[SummarySharder:RAG] Failed to vectorize standard summary after save:', error?.message || error);
+                    ragLog.warn('Failed to vectorize standard summary after save:', error?.message || error);
                 }
             }
         }
@@ -114,7 +115,7 @@ export async function handleSummaryResult(
             { source: 'output-summary', extra: { outputMode: settings?.outputMode || 'system' } }
         );
         if (!warmResult.success && warmResult.reason !== 'rag-disabled') {
-            console.warn('[SummarySharder:RAG] Warm archive failed for output summary:', warmResult.error || warmResult.reason);
+            ragLog.warn('Warm archive failed for output summary:', warmResult.error || warmResult.reason);
         }
     }
 
@@ -128,7 +129,7 @@ export async function handleSummaryResult(
             { source: 'output-summary', extra: { outputMode: settings?.outputMode || 'system' } }
         );
         if (!coldResult.success) {
-            console.warn('[SummarySharder:RAG] Cold archive failed for output summary:', coldResult.error || coldResult.reason);
+            ragLog.warn('Cold archive failed for output summary:', coldResult.error || coldResult.reason);
         }
     }
 
@@ -157,9 +158,9 @@ ${content}`;
     const context = SillyTavern.getContext();
 
     if (!context || !context.chat) {
-        console.warn('[SummarySharder] Could not access chat context');
+        log.warn('Could not access chat context');
         toastr.warning('Could not insert system message. Summary logged to console.');
-        console.log('=== SUMMARY OUTPUT ===\n', formattedContent);
+        log.log('=== SUMMARY OUTPUT ===\n', formattedContent);
         return { didInjectToContext: false, outputUID: null };
     }
 
@@ -172,9 +173,9 @@ ${content}`;
     }
 
     if (!systemMessage) {
-        console.warn('[SummarySharder] Could not create system message');
+        log.warn('Could not create system message');
         toastr.warning('Could not insert system message. Summary logged to console.');
-        console.log('=== SUMMARY OUTPUT ===\n', formattedContent);
+        log.log('=== SUMMARY OUTPUT ===\n', formattedContent);
         return { didInjectToContext: false, outputUID: null };
     }
 
@@ -186,7 +187,7 @@ ${content}`;
         const resolvedIndex = findIndexByUID(context.chat, insertAfterUID);
         if (resolvedIndex === -1) {
             // Message was deleted during processing - fallback to end
-            console.warn('[SummarySharder] Target message not found (deleted?), inserting at end');
+            log.warn('Target message not found (deleted?), inserting at end');
             context.chat.push(systemMessage);
             context.addOneMessage(systemMessage);
             await saveChatConditional();
@@ -242,7 +243,7 @@ ${content}`;
     throwIfAborted('summary output');
     await saveChatConditional();
 
-    console.log(`[SummarySharder] Inserted system message at position ${insertionIndex} (after message ${insertionIndex - 1})`);
+    log.log(`Inserted system message at position ${insertionIndex} (after message ${insertionIndex - 1})`);
 
     // Return the UID of the created message
     return {
@@ -359,7 +360,6 @@ function formatKeywords(settings, startIndex, endIndex, extractedKeywords = []) 
     if (keywords.length === 0) {
         const defaultKeyword = `memory_shard_${startIndex}_${endIndex}`;
         keywords.push(defaultKeyword);
-        console.log(`[SummarySharder] No keywords configured, using fallback: ${defaultKeyword}`);
     }
 
     return keywords;
@@ -431,7 +431,7 @@ async function saveToSingleLorebook(lorebookName, summaryText, entryName, keywor
         // Return the UID of the created entry
         return newEntry.uid || newEntry.id || true;
     } catch (error) {
-        console.error(`[SummarySharder] Failed to save to ${lorebookName}:`, error);
+        log.error(`Failed to save to ${lorebookName}:`, error);
         return false;
     }
 }
@@ -459,13 +459,13 @@ async function saveToLorebook(summaryText, startIndex, endIndex, settings, extra
         }
 
         if (targets.length === 0) {
-            console.warn('[SummarySharder] No lorebooks available');
+            log.warn('No lorebooks available');
             toastr.warning('No target lorebooks configured or available. Please select at least one lorebook.');
-            console.log('=== LOREBOOK ENTRY ===\n', summaryText);
+            log.log('=== LOREBOOK ENTRY ===\n', summaryText);
             return { successCount: 0, firstUID: null };
         }
 
-        console.log(`[SummarySharder] No lorebooks selected, using fallback: ${targets[0].name}`);
+        log.log(`No lorebooks selected, using fallback: ${targets[0].name}`);
     }
 
     // Get entry configuration from settings
@@ -518,14 +518,14 @@ async function saveToLorebook(summaryText, startIndex, endIndex, settings, extra
         } else {
             toastr.success(`Summary saved to ${succeeded.length} lorebook(s)`);
         }
-        console.log(`[SummarySharder] Saved to: ${succeeded.map(r => r.name).join(', ')}`);
+        log.log(`Saved to: ${succeeded.map(r => r.name).join(', ')}`);
     } else if (succeeded.length === 0) {
         toastr.error('Failed to save to any lorebook');
-        console.error('[SummarySharder] All saves failed:', failed.map(r => r.name));
-        console.log('=== LOREBOOK ENTRY ===\n', `Name: ${entryName}\n`, `Keywords: ${keywords.join(', ')}\n`, `Content:\n${summaryText}`);
+        log.error('All saves failed:', failed.map(r => r.name));
+        log.log('=== LOREBOOK ENTRY ===\n', `Name: ${entryName}\n`, `Keywords: ${keywords.join(', ')}\n`, `Content:\n${summaryText}`);
     } else {
         toastr.warning(`Saved to ${succeeded.length}/${results.length} lorebooks`);
-        console.warn('[SummarySharder] Partial success. Failed:', failed.map(r => r.name));
+        log.warn('Partial success. Failed:', failed.map(r => r.name));
     }
 
     return { successCount: succeeded.length, firstUID };

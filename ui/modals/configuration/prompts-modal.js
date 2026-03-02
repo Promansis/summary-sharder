@@ -1,6 +1,6 @@
 /**
  * Prompts Modal Component for Summary Sharder
- * Tabbed modal for managing Summary Prompts, Sharder Prompts, and Events Prompt
+ * Tabbed modal for managing Summary Prompts, Sharder Prompts, and Drafting Prompt
  */
 
 import { saveSettings } from '../../../core/settings.js';
@@ -10,9 +10,9 @@ import {
     importPrompts,
     DEFAULT_PROMPT,
     DEFAULT_SHARDER_PROMPT,
-    DEFAULT_EVENTS_PROMPT,
-    getEventsPrompt,
-    resetEventsPrompt,
+    DEFAULT_CASING_PROMPT,
+    getCasingPrompt,
+    resetCasingPrompt,
     getSharderPrompts,
     ensureSharderPrompts
 } from '../../../core/summarization/prompts.js';
@@ -209,18 +209,18 @@ function renderSharderPromptsTab(settings, container) {
 }
 
 /**
- * Render the Events Prompt tab (Tab 3)
+ * Render the Drafting Prompt tab (Tab 3)
  */
 function renderEventsPromptTab(settings, container) {
-    const eventsPrompt = getEventsPrompt(settings);
+    const eventsPrompt = getCasingPrompt(settings);
 
     container.innerHTML = `
         <div class="ss-events-prompt-tab">
             <div class="ss-block ss-prompts-block">
-                <label>Events Extraction Prompt:</label>
+                <label>Drafting Extraction Prompt:</label>
                 <textarea id="ss-modal-events-prompt" class="text_pole ss-prompts-editor">${eventsPrompt}</textarea>
                 <p class="ss-prompts-hint">
-                    Used by Pre-Edit Events to extract discrete events from chat messages.
+                    Used by Drafting Mode to extract discrete events from chat messages.
                     Leave empty to use the default prompt.
                 </p>
             </div>
@@ -235,17 +235,17 @@ function renderEventsPromptTab(settings, container) {
 
     // Event: Textarea change
     textarea.addEventListener('input', (e) => {
-        settings.eventsPrompt = e.target.value;
+        settings.casingPrompt = e.target.value;
         saveSettings(settings);
     });
 
     // Event: Reset
     container.querySelector('#ss-modal-reset-events').addEventListener('click', async () => {
-        const confirm = await showSsConfirm('Reset Events Prompt', 'Reset the events extraction prompt to the default?');
+        const confirm = await showSsConfirm('Reset Drafting Prompt', 'Reset the drafting extraction prompt to the default?');
         if (confirm === POPUP_RESULT.AFFIRMATIVE) {
-            resetEventsPrompt(settings);
-            textarea.value = DEFAULT_EVENTS_PROMPT;
-            toastr.success('Events prompt reset to default');
+            resetCasingPrompt(settings);
+            textarea.value = DEFAULT_CASING_PROMPT;
+            toastr.success('Drafting prompt reset to default');
         }
     });
 }
@@ -274,7 +274,7 @@ export async function openPromptsModal(settings) {
             <div class="ss-tab-header">
                 <button class="ss-tab-button active" data-tab="summary">Summary Prompts</button>
                 <button class="ss-tab-button" data-tab="sharder">Sharder Prompts</button>
-                <button class="ss-tab-button" data-tab="events">Events Prompt</button>
+                <button class="ss-tab-button" data-tab="events">Drafting Prompt</button>
             </div>
 
             <div class="ss-tab-content">
@@ -385,9 +385,9 @@ export function updateActivePromptDisplay(settings) {
         const summaryPromptName = getActivePromptLabel(settings) || '(none)';
         labels.push(`<strong>Summary Prompt:</strong> ${summaryPromptName}`);
 
-        // If Pre-Edit Events is enabled, also show Pre-Edit Prompt
+        // If Drafting Mode is enabled, also show Drafting Prompt
         if (settings.advancedUserControl) {
-            labels.push(`<strong>Pre-Edit Prompt Active </strong>`);
+            labels.push('<strong>Drafting Prompt Active</strong>');
         }
     }
 

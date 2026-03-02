@@ -1,10 +1,11 @@
 /**
- * Events Modal Component for Pre-Edit Events
+ * Drafting Modal Component for Drafting Mode
  */
 
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../../../../popup.js';
-import { extractEventsFromMessages } from '../../../core/api/events-api.js';
+import { extractDraftEvents } from '../../../core/api/casing-api.js';
 import { escapeHtml } from '../../common/ui-utils.js';
+import { log } from '../../../core/logger.js';
 
 /**
  * Render a single event row
@@ -110,7 +111,7 @@ function updateButtonStates(modalState) {
 }
 
 /**
- * Open the events modal for reviewing and editing events
+ * Open the drafting modal for reviewing and editing events
  * @param {Array} events - Initial array of SummaryEvent objects
  * @param {Array} messages - All chat messages
  * @param {number} startIndex - Start index of range
@@ -119,7 +120,7 @@ function updateButtonStates(modalState) {
  * @param {number} originalContextWordCount - Word count of original context for length calculations
  * @returns {Promise<{confirmed: boolean, events: Array, originalContextWordCount: number}>}
  */
-export async function openEventsModal(events, messages, startIndex, endIndex, settings, originalContextWordCount = null) {
+export async function openDraftingModal(events, messages, startIndex, endIndex, settings, originalContextWordCount = null) {
     // Create modal state
     const modalState = {
         events: JSON.parse(JSON.stringify(events)),
@@ -134,7 +135,7 @@ export async function openEventsModal(events, messages, startIndex, endIndex, se
     const modalHtml = `
         <div class="ss-events-modal">
             <div class="ss-events-header">
-                <h3>Pre-Edit Events</h3>
+                <h3>Drafting Mode</h3>
                 <p>Review and edit events before generating the summary. Uncheck events to exclude them.</p>
             </div>
 
@@ -208,7 +209,7 @@ export async function openEventsModal(events, messages, startIndex, endIndex, se
                 renderEventsList(listContainer, modalState);
 
                 try {
-                    const extractionResult = await extractEventsFromMessages(
+                    const extractionResult = await extractDraftEvents(
                         extractionContext.messages,
                         extractionContext.startIndex,
                         extractionContext.endIndex,
@@ -220,7 +221,7 @@ export async function openEventsModal(events, messages, startIndex, endIndex, se
                     modalState.originalContextWordCount = extractionResult.originalContextWordCount;
                     toastr.success(`Extracted ${extractionResult.events.length} events`);
                 } catch (error) {
-                    console.error('[SummarySharder] Regeneration failed:', error);
+                    log.error('Regeneration failed:', error);
                     toastr.error(`Regeneration failed: ${error.message}`);
                     // Keep existing events on failure
                 } finally {

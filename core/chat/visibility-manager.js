@@ -4,6 +4,7 @@
 
 import { getChatRanges, saveChatRanges } from '../settings.js';
 import { chat, saveChatConditional, refreshSwipeButtons } from '../../../../../../script.js';
+import { log } from '../logger.js';
 
 // Import flag setter and timer control to prevent MutationObserver cascade
 import { setApplyingVisibility, clearPendingVisibilityTimers } from './visibility-state.js';
@@ -154,7 +155,7 @@ export async function applyVisibilitySettings(settings) {
 
         for (const range of ranges) {
             if (range.start < 0 || range.end < range.start || range.start >= chat.length) {
-                console.warn(`[SummarySharder] Skipping invalid range ${range.start}-${range.end} (chat length: ${chat.length})`);
+                log.warn(`Skipping invalid range ${range.start}-${range.end} (chat length: ${chat.length})`);
                 continue;
             }
 
@@ -374,9 +375,10 @@ export function mergeDetectedHiddenRanges() {
     if (addedCount > 0) {
         chatRanges.sort((a, b) => a.start - b.start);
         saveChatRanges(chatRanges);
-        console.log(`[SummarySharder] Auto-detected ${addedCount} hidden range(s) from external source`);
+        log.log(`Auto-detected ${addedCount} hidden range(s) from external source`);
         return true;
     }
 
     return false;
 }
+

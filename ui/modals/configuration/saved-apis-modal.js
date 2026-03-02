@@ -15,6 +15,7 @@ import {
 import { fetchExternalModels } from '../../../core/api/summary-api.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../../../../popup.js';
 import { showSsConfirm, showSsInput } from '../../common/modal-base.js';
+import { log } from '../../../core/logger.js';
 
 /**
  * Render the saved APIs management interface
@@ -226,7 +227,7 @@ function renderSavedApisInterface(settings, container, selectedConfigId = null) 
                 configModel.innerHTML = '<option value="">-- No models found --</option>';
             }
         } catch (error) {
-            console.error('[SummarySharder] Fetch models failed:', error);
+            log.error('Fetch models failed:', error);
             toastr.error(`Failed to fetch models: ${error.message}`);
             configModel.innerHTML = '<option value="">-- Failed to fetch models --</option>';
         } finally {

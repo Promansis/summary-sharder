@@ -1,10 +1,10 @@
 /**
  * API communication for Summary Sharder
  */
-
 import { getActivePrompt } from '../summarization/prompts.js';
 import { buildLengthInstruction } from '../summarization/length-utils.js';
 import { handleSummaryResult } from '../summarization/output.js';
+import { log } from '../logger.js';
 import {
     addHiddenRange,
     subtractHiddenRange,
@@ -12,7 +12,7 @@ import {
     recomputeVisibility
 } from '../chat/range-operations.js';
 import { Popup, POPUP_RESULT } from '../../../../../popup.js';
-import { extractEventsFromMessages, generateEventBasedSummary } from './events-api.js';
+import { extractDraftEvents, generateDraftSummary } from './casing-api.js';
 
 // Import shared API client functions
 import { callSillyTavernAPI, callExternalAPI, normalizeApiUrl } from './api-client.js';
@@ -143,10 +143,10 @@ export async function fetchExternalModels(settings) {
             return data;
         }
 
-        console.warn('[SummarySharder] Unexpected models response format:', data);
+        log.warn('Unexpected models response format:', data);
         return [];
     } catch (error) {
-        console.error('[SummarySharder] Error fetching models:', error);
+        log.error('Error fetching models:', error);
         throw error;
     }
 }
@@ -237,7 +237,7 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
     let originalContextWordCount;
     try {
         throwIfAborted('event extraction');
-        const extractionResult = await extractEventsFromMessages(messages, startIndex, endIndex, settings);
+        const extractionResult = await extractDraftEvents(messages, startIndex, endIndex, settings);
         throwIfAborted('event extraction');
         events = extractionResult.events;
         originalContextWordCount = extractionResult.originalContextWordCount;
@@ -260,9 +260,9 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
     toastr.success(`Extracted ${events.length} events`);
 
     // 2. Show modal for user review
-    const { openEventsModal } = await import('../../ui/modals/summarization/events-modal.js');
+    const { openDraftingModal } = await import('../../ui/modals/summarization/drafting-modal.js');
     throwIfAborted('event review');
-    const result = await openEventsModal(events, messages, startIndex, endIndex, settings, originalContextWordCount);
+    const result = await openDraftingModal(events, messages, startIndex, endIndex, settings, originalContextWordCount);
     throwIfAborted('event review');
 
     if (!result.confirmed) {
@@ -285,7 +285,7 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
         { timeOut: 0, extendedTimeOut: 0 }
     );
 
-    // Get the final word count (may have been updated during regeneration in events modal)
+    // Get the final word count (may have been updated during regeneration in drafting modal)
     const finalWordCount = result.originalContextWordCount ?? originalContextWordCount;
 
     // Determine if keyword extraction is needed (lorebook mode with extraction enabled)
@@ -294,14 +294,14 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
 
     try {
         throwIfAborted('summary generation');
-        const rawSummaryResult = await generateEventBasedSummary(selectedEvents, settings, '', finalWordCount, extractKeywords);
+        const rawSummaryResult = await generateDraftSummary(selectedEvents, settings, '', finalWordCount, extractKeywords);
         throwIfAborted('summary generation');
 
         // Parse keywords from the response (stripped before showing in UI)
         const { summary: summaryResult, keywords: extractedKeywords } = parseSummaryResponse(rawSummaryResult);
 
         if (extractedKeywords.length > 0) {
-            console.log(`[SummarySharder] Extracted keywords (advanced): ${extractedKeywords.join(', ')}`);
+            log.log(`Extracted keywords (advanced): ${extractedKeywords.join(', ')}`);
         }
 
         if (progressToast) toastr.clear(progressToast);
@@ -324,7 +324,7 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
             // Create regenerate callback - uses original context word count for consistent length
             const regenerateCallback = async (userNote) => {
                 throwIfAborted('summary regenerate');
-                const raw = await generateEventBasedSummary(selectedEvents, settings, userNote, finalWordCount, extractKeywords);
+                const raw = await generateDraftSummary(selectedEvents, settings, userNote, finalWordCount, extractKeywords);
                 throwIfAborted('summary regenerate');
                 const { summary } = parseSummaryResponse(raw);
                 return summary;
@@ -394,7 +394,6 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
             await recomputeVisibility();
         }
 
-        console.log('[SummarySharder] Advanced summarization complete!');
         toastr.success('Summarization complete!');
 
     } catch (error) {
@@ -403,7 +402,7 @@ async function runAdvancedSummarization(messages, startIndex, endIndex, settings
             throw error;
         }
         if (progressToast) toastr.clear(progressToast);
-        console.error('[SummarySharder] Advanced summarization failed:', error);
+        log.error('Advanced summarization failed:', error);
         toastr.error(`Summarization failed: ${error.message}`);
     }
 }
@@ -495,7 +494,7 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
             { timeOut: 0, extendedTimeOut: 0 }
         );
 
-        console.log(`[SummarySharder] Summarizing messages ${startIndex} to ${endIndex}...`);
+        log.log(`Summarizing messages ${startIndex} to ${endIndex}...`);
 
         throwIfAborted('summary request');
         const rawResult = await callSummaryAPI(settings, systemPrompt, userPrompt);
@@ -505,7 +504,7 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
         const { summary: summaryResult, keywords: extractedKeywords } = parseSummaryResponse(rawResult);
 
         if (extractedKeywords.length > 0) {
-            console.log(`[SummarySharder] Extracted keywords: ${extractedKeywords.join(', ')}`);
+            log.log(`Extracted keywords: ${extractedKeywords.join(', ')}`);
         }
 
         // Clear progress toast before showing modal
@@ -608,7 +607,7 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
             toastr.clear(progressToast);
         }
 
-        console.log('[SummarySharder] Summarization complete!');
+        log.log('Summarization complete!');
         toastr.success('Summarization complete!');
 
     } catch (error) {
@@ -619,7 +618,7 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
 
         // Handle abort error gracefully
         if (error.name === 'AbortError') {
-            console.log('[SummarySharder] Summarization aborted by user');
+            log.log('Summarization aborted by user');
             if (!isQueueContext) {
                 toastr.info('Summarization stopped');
             }
@@ -629,7 +628,7 @@ KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
             return;
         }
 
-        console.error('[SummarySharder] Summarization failed:', error);
+        log.error('Summarization failed:', error);
         toastr.error(`Summarization failed: ${error.message}`);
     } finally {
         if (operationStarted) {
@@ -659,3 +658,4 @@ export function stopSummarization() {
     abortCurrentOperation();
     toastr.info('Summarization stopped');
 }
+

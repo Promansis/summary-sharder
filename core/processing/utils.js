@@ -219,3 +219,4 @@ export function splitRangeAtIndex(ranges, index) {
     // Filter out invalid ranges (where start > end after adjustment)
     return result.filter(r => r.start <= r.end);
 }
+

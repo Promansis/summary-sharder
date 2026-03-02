@@ -6,6 +6,7 @@
 import { characters, getRequestHeaders } from '../../../../../../script.js';
 import { BaseDropdown } from '../common/dropdown-base.js';
 import { escapeHtml } from '../common/ui-utils.js';
+import { log } from '../../core/logger.js';
 
 /**
  * Chat Dropdown class for single-select with search
@@ -183,7 +184,7 @@ export class ChatDropdown extends BaseDropdown {
 
         const character = characters[characterId];
         if (!character) {
-            console.warn('[SummarySharder] Character not found:', characterId);
+            log.warn('Character not found:', characterId);
             this.isLoading = false;
             this.render();
             return;
@@ -209,7 +210,7 @@ export class ChatDropdown extends BaseDropdown {
             // Sort by file name descending (most recent first typically)
             this.chats.sort((a, b) => b.file_name.localeCompare(a.file_name));
         } catch (error) {
-            console.error('[SummarySharder] Error loading chats:', error);
+            log.error('Error loading chats:', error);
             this.chats = [];
         }
 

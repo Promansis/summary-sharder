@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Settings management for Summary Sharder
  */
 
@@ -12,9 +12,8 @@ import {
     extension_settings,
 } from '../../../../extensions.js';
 
-const SETTINGS_SAVE_TRACE_DEBUG = false;
-const SETTINGS_SAVE_TRACE_SLOW_MS = 8;
-const SETTINGS_SAVE_TRACE_LOG_EVERY = 20;
+import { isDebugEnabled, log } from './logger.js';
+
 let settingsSaveTraceCount = 0;
 
 function getSaveSettingsCallerFromStack(stack) {
@@ -74,16 +73,16 @@ export function getDefaultSettings() {
             fixedOrderValue: 100,         // Used when orderStrategy is 'fixed'
         },
 
-        // Pre-Edit Events
-        advancedUserControl: false,       // Toggle for event-based summary workflow
+        // Drafting Mode
+        advancedUserControl: false,       // Toggle for drafting workflow
 
         // Saved API configurations (for external API mode)
         savedApiConfigs: [],              // Array of { id, name, url, secretId, model }
         activeApiConfigId: null,          // ID of currently selected saved config, or null for manual entry
 
-        // Events-specific API settings (when Pre-Edit Events is enabled)
-        useAlternateEventsApi: false,     // Toggle for using different API for events
-        eventsApiConfigId: null,          // ID of saved config to use for events (null = use main)
+        // Casing API settings (when Drafting Mode is enabled)
+        useAlternateCasingApi: false,     // Toggle for using different API for drafting
+        casingApiConfigId: null,          // ID of saved config to use for drafting (null = use main)
 
         // Context cleanup settings
         contextCleanup: {
@@ -99,8 +98,8 @@ export function getDefaultSettings() {
             customRegexes: [],            // Array of { id, name, pattern, enabled }
         },
 
-        // Configurable events extraction prompt (used by Pre-Edit Events)
-        eventsPrompt: '',
+        // Configurable drafting extraction prompt (used by Drafting Mode)
+        casingPrompt: '',
 
         // Sharder Mode settings
         sharderMode: false,               // Toggle for sharder workflows
@@ -142,7 +141,7 @@ export function getDefaultSettings() {
                 messageFormat: 'minimal',
                 removeStopStrings: false
             },
-            events: {
+            casing: {
                 useSillyTavernAPI: true,
                 apiConfigId: null,
                 connectionProfileId: null,
@@ -222,7 +221,7 @@ export function getDefaultSettings() {
             },
         },
 
-        // Standard Mode RAG settings â€” active when sharderMode is false.
+        // Standard Mode RAG settings — active when sharderMode is false.
         // No scene codes, no section-aware chunking; prose-only chunking; separate ss_standard_* collections.
         ragStandard: {
             enabled: false,
@@ -300,23 +299,23 @@ export function getActiveRagSettings(settings) {
  * Save settings to extension_settings and persist
  */
 export function saveSettings(settings) {
-    const startedAt = SETTINGS_SAVE_TRACE_DEBUG ? performance.now() : 0;
-    const traceStack = SETTINGS_SAVE_TRACE_DEBUG ? new Error().stack : '';
+    const debugEnabled = isDebugEnabled();
+    const startedAt = debugEnabled ? performance.now() : 0;
+    const traceStack = debugEnabled ? new Error().stack : '';
     Object.assign(extension_settings.summary_sharder, settings);
     saveSettingsDebounced();
 
-    if (!SETTINGS_SAVE_TRACE_DEBUG) return;
+    if (!debugEnabled) return;
 
     const duration = performance.now() - startedAt;
     settingsSaveTraceCount += 1;
-    if (duration < SETTINGS_SAVE_TRACE_SLOW_MS && settingsSaveTraceCount % SETTINGS_SAVE_TRACE_LOG_EVERY !== 0) {
+    // Log slow saves or every N saves when debugging
+    if (duration < 8 && settingsSaveTraceCount % 20 !== 0) {
         return;
     }
 
     const caller = getSaveSettingsCallerFromStack(traceStack);
-    console.debug(
-        `[SummarySharder][settings.save] dt=${duration.toFixed(2)}ms count=${settingsSaveTraceCount} caller=${caller}`
-    );
+    log.debug(`[settings.save] dt=${duration.toFixed(2)}ms count=${settingsSaveTraceCount} caller=${caller}`);
 }
 
 /**
@@ -336,7 +335,7 @@ export function getChatRanges() {
 
     // Validate chatId - if mismatch, this is stale data from a different chat
     if (storedChatId && currentChatId && storedChatId !== currentChatId) {
-        console.warn(`[SummarySharder] Chat ID mismatch: stored=${storedChatId}, current=${currentChatId}. Clearing stale ranges.`);
+        log.warn(`Chat ID mismatch: stored=${storedChatId}, current=${currentChatId}. Clearing stale ranges.`);
         chat_metadata.summary_sharder = { chatId: currentChatId, summarizedRanges: [] };
         return [];
     }
@@ -360,10 +359,6 @@ export function getChatRanges() {
 export function saveChatRanges(ranges) {
     const context = SillyTavern.getContext();
     const currentChatId = context?.chatId;
-
-    // DEBUG: Log what ranges we're saving
-    console.log(`[SummarySharder] saveChatRanges called with ${ranges.length} ranges:`,
-        JSON.stringify(ranges.map(r => ({ start: r.start, end: r.end, hidden: r.hidden }))));
 
     if (!chat_metadata.summary_sharder) {
         chat_metadata.summary_sharder = {};
@@ -402,7 +397,7 @@ export function migrateSettings(settings) {
                 enabled: true
             });
 
-            console.log('[SummarySharder] Migrated legacy customRegex to customRegexes array');
+            log.debug('Migrated legacy customRegex to customRegexes array');
             migrated = true;
         }
 
@@ -417,9 +412,26 @@ export function migrateSettings(settings) {
         }
     }
 
-    // Ensure eventsPrompt field exists
-    if (settings.eventsPrompt === undefined) {
-        settings.eventsPrompt = '';
+    // Migrate Pre-Edit Events keys -> Drafting Mode / Casing API keys
+    if (settings.useAlternateEventsApi !== undefined && settings.useAlternateCasingApi === undefined) {
+        settings.useAlternateCasingApi = settings.useAlternateEventsApi;
+        delete settings.useAlternateEventsApi;
+        migrated = true;
+    }
+    if (settings.eventsApiConfigId !== undefined && settings.casingApiConfigId === undefined) {
+        settings.casingApiConfigId = settings.eventsApiConfigId;
+        delete settings.eventsApiConfigId;
+        migrated = true;
+    }
+    if (settings.eventsPrompt !== undefined && settings.casingPrompt === undefined) {
+        settings.casingPrompt = settings.eventsPrompt;
+        delete settings.eventsPrompt;
+        migrated = true;
+    }
+
+    // Ensure casingPrompt field exists
+    if (settings.casingPrompt === undefined) {
+        settings.casingPrompt = '';
         migrated = true;
     }
 
@@ -431,7 +443,7 @@ export function migrateSettings(settings) {
 
     // Migrate to new apiFeatures structure
     if (!settings.apiFeatures) {
-        console.log('[SummarySharder] Migrating to new apiFeatures structure');
+        log.debug('Migrating to new apiFeatures structure');
 
         settings.apiFeatures = {
             summary: {
@@ -439,13 +451,13 @@ export function migrateSettings(settings) {
                 apiConfigId: settings.activeApiConfigId || null,
                 connectionProfileId: null
             },
-            events: {
-                // Events uses alternate API if configured, otherwise inherits main
-                useSillyTavernAPI: settings.useAlternateEventsApi
+            casing: {
+                // Casing uses alternate API if configured, otherwise inherits main
+                useSillyTavernAPI: settings.useAlternateCasingApi
                     ? false
                     : (settings.useSillyTavernAPI ?? false),
-                apiConfigId: (settings.useAlternateEventsApi && settings.eventsApiConfigId)
-                    ? settings.eventsApiConfigId
+                apiConfigId: (settings.useAlternateCasingApi && settings.casingApiConfigId)
+                    ? settings.casingApiConfigId
                     : (settings.activeApiConfigId || null),
                 connectionProfileId: null
             },
@@ -456,7 +468,7 @@ export function migrateSettings(settings) {
             }
         };
 
-        console.log('[SummarySharder] Migration complete - API settings preserved');
+        log.debug('Migration complete - API settings preserved');
         migrated = true;
     }
 
@@ -470,7 +482,7 @@ export function migrateSettings(settings) {
     if (settings.apiFeatures?.singlePass && !settings.apiFeatures.sharder) {
         settings.apiFeatures.sharder = settings.apiFeatures.singlePass;
         delete settings.apiFeatures.singlePass;
-        console.log('[SummarySharder] Migrated apiFeatures.singlePass to apiFeatures.sharder');
+        log.debug('Migrated apiFeatures.singlePass to apiFeatures.sharder');
         migrated = true;
     }
 
@@ -481,7 +493,26 @@ export function migrateSettings(settings) {
             apiConfigId: settings.apiFeatures.summary?.apiConfigId || null,
             connectionProfileId: settings.apiFeatures.summary?.connectionProfileId || null
         };
-        console.log('[SummarySharder] Added sharder to apiFeatures (inheriting from summary settings)');
+        log.debug('Added sharder to apiFeatures (inheriting from summary settings)');
+        migrated = true;
+    }
+
+    // Migrate legacy apiFeatures.events key to apiFeatures.casing
+    if (settings.apiFeatures?.events && !settings.apiFeatures.casing) {
+        settings.apiFeatures.casing = settings.apiFeatures.events;
+        delete settings.apiFeatures.events;
+        log.debug('Migrated apiFeatures.events to apiFeatures.casing');
+        migrated = true;
+    }
+
+    // Ensure casing feature exists in apiFeatures for existing installations
+    if (settings.apiFeatures && !settings.apiFeatures.casing) {
+        settings.apiFeatures.casing = {
+            useSillyTavernAPI: settings.apiFeatures.summary?.useSillyTavernAPI ?? false,
+            apiConfigId: settings.apiFeatures.summary?.apiConfigId || null,
+            connectionProfileId: settings.apiFeatures.summary?.connectionProfileId || null
+        };
+        log.debug('Added casing to apiFeatures (inheriting from summary settings)');
         migrated = true;
     }
 
@@ -490,12 +521,12 @@ export function migrateSettings(settings) {
         const delayMs = Math.round((settings.queueDelay || 0) * 1000);
         const defaults = {
             summary: { temperature: 0.4, topP: 1, maxTokens: 8096 },
-            events: { temperature: 0.4, topP: 1, maxTokens: 4096 },
+            casing: { temperature: 0.4, topP: 1, maxTokens: 4096 },
             sharder: { temperature: 0.25, topP: 1, maxTokens: 8096 }
         };
 
         let needsMigration = false;
-        for (const feature of ['summary', 'events', 'sharder']) {
+        for (const feature of ['summary', 'casing', 'sharder']) {
             if (settings.apiFeatures[feature]) {
                 const cfg = settings.apiFeatures[feature];
                 const def = defaults[feature];
@@ -511,7 +542,7 @@ export function migrateSettings(settings) {
         }
 
         if (needsMigration) {
-            console.log('[SummarySharder] Migrated generation parameters to apiFeatures');
+            log.debug('Migrated generation parameters to apiFeatures');
             migrated = true;
         }
     }
@@ -555,14 +586,14 @@ export function migrateSettings(settings) {
     // Add RAG settings block for existing installations
     if (settings.rag === undefined) {
         settings.rag = getDefaultSettings().rag;
-        console.log('[SummarySharder] Added RAG settings block');
+        log.debug('Added RAG settings block');
         migrated = true;
     }
 
     // Add ragStandard settings block for existing installations
     if (settings.ragStandard === undefined) {
         settings.ragStandard = getDefaultSettings().ragStandard;
-        console.log('[SummarySharder] Added ragStandard settings block');
+        log.debug('Added ragStandard settings block');
         migrated = true;
     }
 
@@ -827,10 +858,12 @@ export function migrateSettings(settings) {
     }
 
     if (migrated) {
+        log.log('Settings migrated');
         saveSettings(settings);
     }
 
     return settings;
 }
+
 
 

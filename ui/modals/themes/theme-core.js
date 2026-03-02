@@ -3,6 +3,7 @@
  */
 
 import { BUILTIN_THEMES } from '../../common/builtin-themes.js';
+import { log } from '../../../core/logger.js';
 
 // ===== Custom Themes Storage =====
 let customThemes = {};
@@ -77,12 +78,12 @@ export function initializeThemes(settings) {
 
     // Verify theme exists, fallback to default
     if (!getThemes()[currentTheme]) {
-        console.warn(`[SummarySharder] Theme "${currentTheme}" not found, falling back to default`);
+        log.warn(`Theme "${currentTheme}" not found, falling back to default`);
         currentTheme = 'default';
     }
 
     applyTheme(currentTheme);
-    console.log(`[SummarySharder] Theme initialized: ${currentTheme}`);
+    log.log(`Theme initialized: ${currentTheme}`);
 }
 
 /**
@@ -94,7 +95,7 @@ export function applyTheme(themeId) {
     const theme = themes[themeId];
 
     if (!theme) {
-        console.warn(`[SummarySharder] Unknown theme: ${themeId}, falling back to default`);
+        log.warn(`Unknown theme: ${themeId}, falling back to default`);
         themeId = 'default';
     }
 
@@ -252,7 +253,7 @@ export function validateTheme(theme) {
         // Warn about unknown properties (non-fatal)
         for (const prop of Object.keys(theme.colors)) {
             if (!VALID_COLOR_PROPS.includes(prop)) {
-                console.warn(`[SummarySharder] Unknown color property: ${prop}`);
+                log.warn(`Unknown color property: ${prop}`);
             }
         }
     }
@@ -512,3 +513,4 @@ export async function updateCustomTheme(themeId, updates, settings, saveSettings
 
     return { success: true };
 }
+

@@ -6,6 +6,7 @@
 
 import { saveSettings, getSettings } from '../settings.js';
 import { getRequestHeaders } from '../../../../../../script.js';
+import { log } from '../logger.js';
 
 // Use SillyTavern's predefined custom API key slot
 // Custom keys don't work with /find endpoint due to getSecretState() only returning SECRET_KEYS
@@ -35,14 +36,14 @@ async function writeSecretDirect(key, value, label) {
         });
 
         if (!response.ok) {
-            console.error('[SummarySharder] Failed to write secret:', response.status);
+            log.error('Failed to write secret:', response.status);
             return null;
         }
 
         const data = await response.json();
         return data.id || null;
     } catch (error) {
-        console.error('[SummarySharder] Error writing secret:', error);
+        log.error('Error writing secret:', error);
         return null;
     }
 }
@@ -64,7 +65,7 @@ async function findSecretDirect(key, id) {
 
         if (!response.ok) {
             if (response.status === 403) {
-                console.warn('[SummarySharder] Key exposure disabled in ST config');
+                log.warn('Key exposure disabled in ST config');
             }
             return null;
         }
@@ -72,7 +73,7 @@ async function findSecretDirect(key, id) {
         const data = await response.json();
         return data.value || null;
     } catch (error) {
-        console.error('[SummarySharder] Error finding secret:', error);
+        log.error('Error finding secret:', error);
         return null;
     }
 }
@@ -93,7 +94,7 @@ async function deleteSecretDirect(key, id) {
 
         return response.ok;
     } catch (error) {
-        console.error('[SummarySharder] Error deleting secret:', error);
+        log.error('Error deleting secret:', error);
         return false;
     }
 }
@@ -363,9 +364,9 @@ export async function deleteApiConfig(settings, configId) {
         settings.activeApiConfigId = null;
     }
 
-    // Also clear events API if it was using the deleted config
-    if (settings.eventsApiConfigId === configId) {
-        settings.eventsApiConfigId = null;
+    // Also clear casing API if it was using the deleted config
+    if (settings.casingApiConfigId === configId) {
+        settings.casingApiConfigId = null;
     }
 
     saveSettings(settings);
@@ -415,3 +416,4 @@ export async function getApiKeyForConfig(settings, configId) {
 export function getConfigById(settings, configId) {
     return settings.savedApiConfigs?.find(c => c.id === configId) || null;
 }
+

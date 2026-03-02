@@ -10,8 +10,8 @@ import { getShardCollectionId } from './collection-manager.js';
 import { extractKeywordsTfIdf } from './vectorize.js';
 import { insertChunks, listChunks } from './vector-client.js';
 import { throwIfAborted } from '../api/abort-controller.js';
+import { archiveLog } from '../logger.js';
 
-const LOG_PREFIX = '[SummarySharder:RAG:Archive]';
 const DEFAULT_COLD_ARCHIVE_LIMIT = 100;
 
 /**
@@ -259,7 +259,7 @@ export async function archiveToWarm(items, startIndex, endIndex, settings, metad
             collectionId,
         };
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Warm archive failed:`, error?.message || error);
+        archiveLog.warn('Warm archive failed:', error?.message || error);
         return {
             success: false,
             total: chunks.length,
@@ -340,7 +340,7 @@ export async function archiveToCold(items, startIndex, endIndex, chatId = null, 
             total: chat_metadata.summary_sharder.coldArchive.length,
         };
     } catch (error) {
-        console.warn(`${LOG_PREFIX} Cold archive failed:`, error?.message || error);
+        archiveLog.warn('Cold archive failed:', error?.message || error);
         return {
             success: false,
             appended: 0,

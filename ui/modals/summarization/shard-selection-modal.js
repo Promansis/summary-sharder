@@ -7,6 +7,7 @@ import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../../../../popup.js';
 import { escapeHtml } from '../../common/ui-utils.js';
 import { findSavedExtractions, parseExtractionResponse } from '../../../core/summarization/sharder-pipeline.js';
 import { parseConsolidatedShard } from '../../../core/summarization/shard-utils.js';
+import { log } from '../../../core/logger.js';
 
 function sortByRangeDesc(items) {
     return [...items].sort((a, b) => {
@@ -62,7 +63,7 @@ function parseSelectedShards(selectedItems) {
             });
         } catch (error) {
             skipped++;
-            console.warn('[SummarySharder] Failed to parse selected shard for sharder. Skipping item:', {
+            log.warn('Failed to parse selected shard for sharder. Skipping item:', {
                 identifier: item?.identifier,
                 type: item?.type,
                 error,

@@ -4,6 +4,7 @@
  */
 
 import { escapeHtml } from './ui-utils.js';
+import { log } from '../../core/logger.js';
 
 /**
  * Base class for dropdown components with search
@@ -32,7 +33,7 @@ export class BaseDropdown {
     render() {
         const container = document.getElementById(this.containerId);
         if (!container) {
-            console.warn('[SummarySharder] Dropdown container not found:', this.containerId);
+            log.warn('Dropdown container not found:', this.containerId);
             return;
         }
 

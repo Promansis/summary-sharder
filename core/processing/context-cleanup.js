@@ -3,6 +3,8 @@
  * Handles all context cleaning operations and related UI events
  */
 
+import { log } from '../logger.js';
+
 const defaultOptions = {
     enabled: false,
     stripHtml: false,
@@ -78,7 +80,7 @@ function applyCustomRegex(text, pattern) {
         const regex = new RegExp(pattern, 'g');
         return text.replace(regex, '');
     } catch (e) {
-        console.warn('[SummarySharder] Invalid custom regex:', e.message);
+        log.warn('Invalid custom regex:', e.message);
         return text;
     }
 }
@@ -202,4 +204,5 @@ export function cleanContext(context, options = null) {
 
     return cleaned;
 }
+
 

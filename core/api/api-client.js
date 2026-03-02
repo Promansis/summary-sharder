@@ -9,6 +9,8 @@ import {
     getRequestHeaders,
     main_api,
 } from '../../../../../../script.js';
+import { log } from '../logger.js';
+
 import {
     createGenerationParameters,
     getChatCompletionModel,
@@ -267,7 +269,7 @@ export async function callSillyTavernAPI(systemPrompt, userPrompt, options = {})
 
     if (removeStopStrings) {
         if (main_api !== 'openai') {
-            console.warn('[SummarySharder] Remove Stop Strings is only supported on chat-completions main_api=openai. Using default quiet path.', {
+            log.warn('Remove Stop Strings is only supported on chat-completions main_api=openai. Using default quiet path.', {
                 mainApi: main_api,
             });
         } else {
@@ -434,3 +436,4 @@ export async function callAPI(settings, systemPrompt, userPrompt, useExternalAPI
         return await callSillyTavernAPI(systemPrompt, userPrompt, effectiveOptions);
     }
 }
+

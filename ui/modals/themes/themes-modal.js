@@ -16,6 +16,7 @@ import {
     duplicateTheme
 } from './theme-core.js';
 import { showColorEditorModal } from './theme-editor-modal.js';
+import { log } from '../../../core/logger.js';
 
 // Proxy to preserve existing code paths that reference customThemes directly
 const customThemes = new Proxy({}, {
@@ -305,7 +306,7 @@ async function showCreateDialog(settings, saveSettingsFn, refreshModalFn) {
     try {
         await waitForElement('.ss-create-theme-modal');
     } catch (e) {
-        console.warn('[SummarySharder] Create modal element not found:', e);
+        log.warn('Create modal element not found:', e);
         return showPromise;
     }
     

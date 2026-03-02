@@ -1,8 +1,8 @@
 /**
- * Event extraction and event-based summary generation for Pre-Edit Events
+ * Draft extraction and draft-based summary generation for Drafting Mode
  */
 
-import { getActivePrompt, getEventsPrompt } from '../summarization/prompts.js';
+import { getActivePrompt, getCasingPrompt } from '../summarization/prompts.js';
 import { buildLengthInstruction, countWords } from '../summarization/length-utils.js';
 import { getRequestHeaders } from '../../../../../../script.js';
 import { applyContextCleanup } from '../processing/context-cleanup.js';
@@ -17,6 +17,7 @@ import { getFeatureApiSettings } from './feature-api-config.js';
 
 // Import abort controller
 import { getAbortSignal } from './abort-controller.js';
+import { log } from '../logger.js';
 
 /**
  * Call the appropriate API based on settings
@@ -24,9 +25,9 @@ import { getAbortSignal } from './abort-controller.js';
  * @param {Object} settings - Extension settings
  * @param {string} systemPrompt - System prompt
  * @param {string} userPrompt - User prompt
- * @param {string} feature - Feature key ('events' or 'summary')
+ * @param {string} feature - Feature key ('casing' or 'summary')
  */
-async function callAPI(settings, systemPrompt, userPrompt, feature = 'events') {
+async function callAPI(settings, systemPrompt, userPrompt, feature = 'casing') {
     // Get effective API settings for the specified feature
     const effectiveSettings = await getFeatureApiSettings(settings, feature);
 
@@ -120,7 +121,7 @@ function transformToSummaryEvents(rawEvents, startIndex, endIndex) {
  * @param {Object} settings - Extension settings
  * @returns {Promise<{events: Array, originalContextWordCount: number}>} Events and original context word count
  */
-export async function extractEventsFromMessages(messages, startIndex, endIndex, settings) {
+export async function extractDraftEvents(messages, startIndex, endIndex, settings) {
     // Always honor hidden-message filtering even when full cleanup is disabled.
     const cleanupForBuild = settings.contextCleanup?.enabled
         ? settings.contextCleanup
@@ -139,7 +140,7 @@ export async function extractEventsFromMessages(messages, startIndex, endIndex, 
     // Capture original context word count for length calculations
     const originalContextWordCount = countWords(chatText);
 
-    const systemPrompt = getEventsPrompt(settings);
+    const systemPrompt = getCasingPrompt(settings);
 
     const userPrompt = `CHAT CONTENT (Messages ${startIndex} to ${endIndex}):
 
@@ -147,11 +148,11 @@ ${chatText}
 
 Extract all significant events from the above conversation and return them as a JSON array.`;
 
-    console.log('[SummarySharder] Extracting events from messages...');
+    log.log('Extracting events from messages...');
 
-    const response = await callAPI(settings, systemPrompt, userPrompt, 'events');
+    const response = await callAPI(settings, systemPrompt, userPrompt, 'casing');
 
-    console.log('[SummarySharder] Event extraction response received');
+    log.log('Event extraction response received');
 
     const rawEvents = parseJSONFromResponse(response);
     const events = transformToSummaryEvents(rawEvents, startIndex, endIndex);
@@ -159,7 +160,7 @@ Extract all significant events from the above conversation and return them as a 
     // Sort events chronologically by start index
     events.sort((a, b) => a.messageRange.startIndex - b.messageRange.startIndex);
 
-    console.log(`[SummarySharder] Extracted ${events.length} events`);
+    log.log(`Extracted ${events.length} events`);
 
     return { events, originalContextWordCount };
 }
@@ -173,7 +174,7 @@ Extract all significant events from the above conversation and return them as a 
  * @param {boolean} extractKeywords - Whether to append keyword extraction instruction
  * @returns {Promise<string>} Generated summary text (may include KEYWORDS line if extractKeywords is true)
  */
-export async function generateEventBasedSummary(selectedEvents, settings, userNote = '', originalContextWordCount = null, extractKeywords = false) {
+export async function generateDraftSummary(selectedEvents, settings, userNote = '', originalContextWordCount = null, extractKeywords = false) {
     const summaryPrompt = getActivePrompt(settings);
 
     if (!summaryPrompt) {
@@ -228,10 +229,11 @@ After your summary, on a new line, provide exactly 5 keywords that capture the k
 KEYWORDS: keyword1, keyword2, keyword3, keyword4, keyword5`;
     }
 
-    console.log('[SummarySharder] Generating event-based summary...');
+    log.log('Generating event-based summary...');
 
     const result = await callAPI(settings, summaryPrompt, userPrompt, 'summary');
 
-    console.log('[SummarySharder] Event-based summary generated');
+    log.log('Event-based summary generated');
     return result;
 }
+

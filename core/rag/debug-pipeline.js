@@ -10,6 +10,7 @@ import { bm25Score, keywordBoost, runClientHybridFusion, scoreAndRank } from './
 import { resolveRagEmbeddingApiKey } from './rag-secrets.js';
 import { rerankDocuments } from './reranker-client.js';
 import { hybridQuery, listChunks, queryChunks } from './vector-client.js';
+import { ragLog } from '../logger.js';
 import {
     ANCHORS_SECTION_KEY,
     ANCHORS_SECTION_LABEL,
@@ -426,7 +427,7 @@ async function expandByScene(settings, shardResults) {
                 if (expanded.length >= maxSceneExpansionChunks) break;
             }
         } catch (error) {
-            console.warn('[SummarySharder:RAG] Scene expansion failed:', error?.message || error);
+            ragLog.warn('Scene expansion failed:', error?.message || error);
         }
     }
 
@@ -676,7 +677,7 @@ async function fetchLatestSuperseding(collectionId, rag) {
         items.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
         return items[0];
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Debug fallback superseding fetch failed:', error?.message || error);
+        ragLog.warn('Debug fallback superseding fetch failed:', error?.message || error);
         return null;
     }
 }
@@ -703,7 +704,7 @@ async function fetchLatestRolling(collectionId, rag, limit = 50) {
             hasMore: !!hasMore,
         };
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Debug fallback rolling fetch failed:', error?.message || error);
+        ragLog.warn('Debug fallback rolling fetch failed:', error?.message || error);
         return {
             items: [],
             fetchedCount: 0,
@@ -734,7 +735,7 @@ async function fetchLatestAnchors(collectionId, rag, limit = 50) {
             hasMore: !!hasMore,
         };
     } catch (error) {
-        console.warn('[SummarySharder:RAG] Debug fallback anchors fetch failed:', error?.message || error);
+        ragLog.warn('Debug fallback anchors fetch failed:', error?.message || error);
         return {
             items: [],
             fetchedCount: 0,

@@ -6,6 +6,7 @@
  */
 
 import { tokenize } from './evidence-checker.js';
+import { log } from '../logger.js';
 
 /** Regex to split chat text built with indexFormat:'msg' into individual messages. */
 const MSG_PATTERN = /\[Msg\s+(\d+)\]\s*\[([^\]]+)\]:\s*/g;
@@ -103,9 +104,7 @@ export function analyzeMessageCoverage(chatText, outputSections, _context) {
     report.totalUncovered = report.uncoveredMessages.length;
 
     if (report.totalUncovered > 0) {
-        console.debug(
-            `[SummarySharder] Message coverage: ${report.totalUncovered}/${messages.length} messages uncovered`
-        );
+        log.debug(`Message coverage: ${report.totalUncovered}/${messages.length} messages uncovered`);
     }
 
     return report;

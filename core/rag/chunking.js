@@ -4,8 +4,7 @@
  */
 
 import { normalizeExtractionResponse } from '../summarization/sharder-pipeline.js';
-
-const LOG_PREFIX = '[SummarySharder:RAG]';
+import { ragLog } from '../logger.js';
 
 export const CHUNK_BEHAVIORS = {
     superseding: {
@@ -659,7 +658,7 @@ export function chunkShardBySection(shardText, startIdx, endIdx, keywords = [], 
         }
     }
 
-    console.log(`${LOG_PREFIX} Built ${chunks.length} section-aware chunk(s) from shard ${startIndex}-${endIndex}`);
+    ragLog.debug(`Built ${chunks.length} section-aware chunk(s) from shard ${startIndex}-${endIndex}`);
     return { chunks, resolvedEntities };
 }
 
@@ -807,6 +806,6 @@ export function chunkShardBySceneCodes(shardText, startIdx, endIdx, keywords = [
         return [chunkShardSceneAware(text, startIdx, endIdx, keywords, sceneCodeOverride || explicitCodes[0] || null)];
     }
 
-    console.log(`${LOG_PREFIX} Built ${chunks.length} scene chunk(s) from explicit scene codes`);
+    ragLog.debug(`Built ${chunks.length} scene chunk(s) from explicit scene codes`);
     return chunks;
 }
