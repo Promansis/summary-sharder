@@ -362,6 +362,63 @@ export const PROMPTS_CSS = `
     overflow-y: auto;
 }
 
+/* Textarea action button bar */
+.ss-textarea-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 4px;
+}
+
+.ss-textarea-wrapper .ss-prompts-editor {
+    flex: 0 0 auto;
+    width: 100%;
+}
+
+.ss-textarea-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 3px;
+    margin-top: 4px;
+    padding: 0;
+}
+
+.ss-textarea-action-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 36px;
+    height: 32px;
+    min-width: 36px;
+    padding: 0;
+    border-radius: 4px;
+    border: 1px solid var(--ss-border) !important;
+    background: var(--ss-bg-secondary) !important;
+    background-image: none !important;
+    color: var(--ss-text-muted);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    line-height: 1;
+    box-shadow: var(--ss-shadow) !important;
+    text-shadow: none !important;
+    filter: none !important;
+    transition: background var(--ss-transition), border-color var(--ss-transition), color var(--ss-transition);
+}
+
+.ss-textarea-action-btn:hover {
+    background: var(--ss-highlight) !important;
+    border-color: var(--ss-primary) !important;
+    color: var(--ss-primary) !important;
+}
+
+.ss-textarea-action-btn:active {
+    background: var(--ss-primary) !important;
+    color: white !important;
+}
+
 .ss-prompts-buttons-row {
     display: flex;
     gap: 5px;

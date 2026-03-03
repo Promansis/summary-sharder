@@ -21,6 +21,54 @@ import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../../../../popup.js';
 import { showSsConfirm, showSsInput } from '../../common/modal-base.js';
 
 /**
+ * Attach Copy/Paste/Clear/Reset action buttons to a prompt textarea.
+ * @param {HTMLTextAreaElement} textarea
+ * @param {Function} onReset - async function to call when Reset is clicked
+ */
+function createTextareaActions(textarea, onReset) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'ss-textarea-wrapper';
+    textarea.parentNode.insertBefore(wrapper, textarea);
+    wrapper.appendChild(textarea);
+
+    const actions = document.createElement('div');
+    actions.className = 'ss-textarea-actions';
+    actions.innerHTML = `
+        <button class="ss-textarea-action-btn" data-action="copy" title="Copy to clipboard"><i class="fa-solid fa-copy"></i></button>
+        <button class="ss-textarea-action-btn" data-action="paste" title="Paste from clipboard"><i class="fa-solid fa-paste"></i></button>
+        <button class="ss-textarea-action-btn" data-action="clear" title="Clear content"><i class="fa-solid fa-xmark"></i></button>
+        <button class="ss-textarea-action-btn" data-action="reset" title="Reset to default"><i class="fa-solid fa-rotate-left"></i></button>
+    `;
+    wrapper.appendChild(actions);
+
+    actions.querySelector('[data-action="copy"]').addEventListener('click', () => {
+        navigator.clipboard.writeText(textarea.value)
+            .then(() => toastr.success('Copied to clipboard'))
+            .catch(() => toastr.error('Failed to copy'));
+    });
+
+    actions.querySelector('[data-action="paste"]').addEventListener('click', () => {
+        navigator.clipboard.readText()
+            .then(text => {
+                textarea.value = text;
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                toastr.success('Pasted from clipboard');
+            })
+            .catch(() => toastr.error('Failed to paste — check clipboard permissions'));
+    });
+
+    actions.querySelector('[data-action="clear"]').addEventListener('click', async () => {
+        const confirm = await showSsConfirm('Clear Prompt', 'Clear all content from this prompt?');
+        if (confirm === POPUP_RESULT.AFFIRMATIVE) {
+            textarea.value = '';
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+    });
+
+    actions.querySelector('[data-action="reset"]').addEventListener('click', onReset);
+}
+
+/**
  * Render the prompts dropdown and textarea for Tab 1 (Summary Prompts)
  */
 function renderSummaryPromptsTab(settings, container) {
@@ -67,6 +115,23 @@ function renderSummaryPromptsTab(settings, container) {
     }
 
     populateDropdown();
+
+    // Capture initial state for reset
+    const initialContent = textarea.value;
+
+    // Textarea action buttons (Copy / Paste / Clear / Reset)
+    createTextareaActions(textarea, async () => {
+        const confirm = await showSsConfirm('Reset Prompt', 'Discard changes to this prompt?');
+        if (confirm === POPUP_RESULT.AFFIRMATIVE) {
+            const idx = settings.prompts.findIndex(p => p.name === settings.activePromptName);
+            if (idx !== -1) {
+                settings.prompts[idx].content = initialContent;
+                textarea.value = initialContent;
+                saveSettings(settings);
+                toastr.success('Prompt reset to last saved version');
+            }
+        }
+    });
 
     // Event: Dropdown change
     select.addEventListener('change', (e) => {
@@ -188,6 +253,20 @@ function renderSharderPromptsTab(settings, container) {
     const singlePassTextarea = container.querySelector('#ss-modal-single-pass-prompt');
     singlePassTextarea.value = sharderPrompts.prompt;
 
+    // Capture initial state for reset
+    const initialSharderContent = sharderPrompts.prompt;
+
+    // Textarea action buttons (Copy / Paste / Clear / Reset)
+    createTextareaActions(singlePassTextarea, async () => {
+        const confirm = await showSsConfirm('Reset Sharder Prompt', 'Discard changes to this prompt?');
+        if (confirm === POPUP_RESULT.AFFIRMATIVE) {
+            settings.sharderPrompts = { prompt: initialSharderContent };
+            singlePassTextarea.value = initialSharderContent;
+            saveSettings(settings);
+            toastr.success('Sharder prompt reset to last saved version');
+        }
+    });
+
     // Event: Sharder prompt change
     singlePassTextarea.addEventListener('input', (e) => {
         if (!settings.sharderPrompts) settings.sharderPrompts = {};
@@ -234,6 +313,20 @@ function renderEventsPromptTab(settings, container) {
 
     const textarea = container.querySelector('#ss-modal-events-prompt');
     textarea.value = eventsPrompt;
+
+    // Capture initial state for reset
+    const initialEventsContent = eventsPrompt;
+
+    // Textarea action buttons (Copy / Paste / Clear / Reset)
+    createTextareaActions(textarea, async () => {
+        const confirm = await showSsConfirm('Reset Drafting Prompt', 'Discard changes to this prompt?');
+        if (confirm === POPUP_RESULT.AFFIRMATIVE) {
+            settings.casingPrompt = initialEventsContent;
+            textarea.value = initialEventsContent;
+            saveSettings(settings);
+            toastr.success('Drafting prompt reset to last saved version');
+        }
+    });
 
     // Event: Textarea change
     textarea.addEventListener('input', (e) => {
