@@ -4,11 +4,11 @@
 
 /**
  * Parse relationship lines of style:
- * [A]â†’[B]: trust=61 (+4), tension=22 (-3), intimacy=48 (+2)
+ * [A]→[B]: trust=61 (+4), tension=22 (-3), intimacy=48 (+2)
  */
 function parseRelationshipLine(line) {
     const content = String(line || '');
-    const pairMatch = content.match(/\[(.+?)\]\s*â†’\s*\[(.+?)\]/);
+    const pairMatch = content.match(/\[(.+?)\]\s*→\s*\[(.+?)\]/);
     if (!pairMatch) return null;
 
     const values = {};
@@ -57,7 +57,7 @@ export function checkRelationshipCoherence(sections) {
                 diagnostics.push({
                     level: 'warning',
                     code: 'RELATIONSHIP_BOUNDS',
-                    message: `${parsed.from}â†’${parsed.to} ${metric}=${value} is out of bounds (0-100).`
+                    message: `${parsed.from}→${parsed.to} ${metric}=${value} is out of bounds (0-100).`
                 });
             }
         }

@@ -1,7 +1,7 @@
 ﻿/**
  * Message Coverage Analyzer
  * Detects which input chat messages are NOT represented in the sharder output.
- * Runs purely client-side â€” no API calls. Uses lexical overlap between each input
+ * Runs purely client-side — no API calls. Uses lexical overlap between each input
  * message and the pooled output tokens to identify uncovered story content.
  */
 

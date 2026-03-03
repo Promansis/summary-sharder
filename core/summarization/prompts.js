@@ -62,7 +62,7 @@ Return ONLY a valid JSON array, no other text or explanation. Schema:
   }
 ]
 
-SELF-VALIDATION: Before returning your output, verify that: the JSON is syntactically valid, events are in chronological order, startIndex â‰¤ endIndex for all events, and no required fields are missing.`;
+SELF-VALIDATION: Before returning your output, verify that: the JSON is syntactically valid, events are in chronological order, startIndex ≤ endIndex for all events, and no required fields are missing.`;
 
 /**
  * Get the casing extraction prompt (custom or default)
@@ -114,8 +114,8 @@ OUTPUT: Produce only the structured summary. No preamble, no closing remarks, no
 /**
  * Default Sharder Prompt - Combined extraction + consolidation in one step
  */
-export const DEFAULT_SHARDER_PROMPT = `Task: You are a Forensic Memory Architect. In a single pass, extract and consolidate atomic continuity facts from raw narrative input into a canonical Memory Shard. Your output becomes permanent long-term memory â€” decide what matters and compress it authoritatively.
-PIPELINE CONTEXT: You are performing a combined extraction + consolidation in one step. Your output will be injected as LLM context in future turns â€” optimize for information density and machine parseability over human readability. Your output may later be merged with other shards in a re-consolidation pass; use stable structures.
+export const DEFAULT_SHARDER_PROMPT = `Task: You are a Forensic Memory Architect. In a single pass, extract and consolidate atomic continuity facts from raw narrative input into a canonical Memory Shard. Your output becomes permanent long-term memory — decide what matters and compress it authoritatively.
+PIPELINE CONTEXT: You are performing a combined extraction + consolidation in one step. Your output will be injected as LLM context in future turns — optimize for information density and machine parseability over human readability. Your output may later be merged with other shards in a re-consolidation pass; use stable structures.
 
 INPUT DETECTION:
 - If input begins with "===== EXISTING SHARD(S) =====" followed by "===== NEW CHAT CONTENT =====":
@@ -139,35 +139,35 @@ MERGE RULES (when existing shards are present):
 
 HARD LIMIT: Must fit within the available generation budget. Target 2000-4000 tokens. Compress before dropping, but ALWAYS output [CURRENT] and terminate with "===END===".
 
-PROCESS (internal â€” do not output your planning):
+PROCESS (internal — do not output your planning):
 1. Read all input. Identify scene transitions, pivots, and arc-level beats.
 2. Assign fidelity weights to each candidate fact.
 3. Allocate per-section budget against caps.
-4. Extract and compress simultaneously â€” write final-form entries directly.
+4. Extract and compress simultaneously — write final-form entries directly.
 5. Validate before output.
 
 FIDELITY SCALING (weights = continuity authority, NOT emotional intensity):
-ðŸ”´critical(5): Full treatment across all sections. Character death, permanent betrayal, world rule change, irreversible transformation.
-ðŸŸ major(4): EVENTS + STATES + DIALOGUE + SCENES(50-100w). Alliance formed, major location reveal, relationship rupture.
-ðŸŸ¡moderate(3): EVENTS + STATES. New info learned, minor conflict, plan formed.
-ðŸŸ¢minor(2): EVENTS entry only. Routine travel, minor interaction, small purchase.
-âšªtrivial(1): Omit unless callback-critical. Background scenery, incidental chatter.
-ðŸ”žNSFW: Always ðŸ”´critical treatment. VERBATIM preservation â€” never summarize or paraphrase.
+🔴critical(5): Full treatment across all sections. Character death, permanent betrayal, world rule change, irreversible transformation.
+🟠major(4): EVENTS + STATES + DIALOGUE + SCENES(50-100w). Alliance formed, major location reveal, relationship rupture.
+🟡moderate(3): EVENTS + STATES. New info learned, minor conflict, plan formed.
+🟢minor(2): EVENTS entry only. Routine travel, minor interaction, small purchase.
+⚪trivial(1): Omit unless callback-critical. Background scenery, incidental chatter.
+🔞NSFW: Always 🔴critical treatment. VERBATIM preservation — never summarize or paraphrase.
 
 EXTRACTION PRINCIPLES:
 - Extract only trajectory-changing information.
-- Emotional beats must manifest as EVENTS, pivot STATES, or RELATIONSHIP values â€” not standalone observations.
+- Emotional beats must manifest as EVENTS, pivot STATES, or RELATIONSHIP values — not standalone observations.
 - Collapse repetitive actions into single outcome-level entries.
 - Ignore atmosphere unless it establishes a world rule or callback.
 - Extract ONLY information explicitly present in the provided text. Never infer from training data.
-- Unexecuted plans, threats, or conditional statements â†’ [THREADS] or [STATES], never [EVENTS].
+- Unexecuted plans, threats, or conditional statements → [THREADS] or [STATES], never [EVENTS].
 
 COMPRESSION RULES:
-- Repeated events of same type â†’ merge into single entry with count or range.
-- Minor dialogue â†’ summarize as EVENT unless wording is structurally critical.
-- Settings/locations â†’ [WORLD] only if they establish rules; otherwise note in [CURRENT] or [TIMELINE].
-- Completed arcs â†’ compress to summary form in [DEVELOPMENTS].
-- Historical pivot entries no longer active â†’ merge into single arc-level anchor.
+- Repeated events of same type → merge into single entry with count or range.
+- Minor dialogue → summarize as EVENT unless wording is structurally critical.
+- Settings/locations → [WORLD] only if they establish rules; otherwise note in [CURRENT] or [TIMELINE].
+- Completed arcs → compress to summary form in [DEVELOPMENTS].
+- Historical pivot entries no longer active → merge into single arc-level anchor.
 
 DIALOGUE RULES:
 - Include only wording that causes change (confession, threat, boundary, promise, reveal).
@@ -204,9 +204,9 @@ ANCHORS RULES:
 CALLBACK / THREAD RULES:
 - CALLBACKS = specific planted payloads expecting future payoff. Status: UNFIRED|DEVELOPING|FIRED.
 - THREADS = ongoing situations, tensions, or open questions. Status: UNRESOLVED|DEVELOPING|ACTIVE|RESOLVED|FORESHADOWED.
-- Never duplicate between CALLBACKS and THREADS. If it has a specific trigger â†’ CALLBACK. If it is a situation â†’ THREAD.
+- Never duplicate between CALLBACKS and THREADS. If it has a specific trigger → CALLBACK. If it is a situation → THREAD.
 - Remove fully RESOLVED threads unless they caused permanent DEVELOPMENTS.
-- Move FIRED callbacks â†’ DEVELOPMENTS if significant.
+- Move FIRED callbacks → DEVELOPMENTS if significant.
 
 ENTROPY CONTROL (mandatory):
 - Merge semantically similar events across the full input.
@@ -231,7 +231,7 @@ Section Caps (Strict):
 [ANCHORS] <= 5
 [CALLBACKS] <= 6
 [THREADS] <= 6
-[SCENES] <= 3 scenes, 50-150 words each (ðŸ”´critical moments only)
+[SCENES] <= 3 scenes, 50-150 words each (🔴critical moments only)
 [CURRENT] = 1 row (mandatory)
 
 BUDGET ENFORCEMENT:
@@ -239,7 +239,7 @@ If near output limit, prune in this order:
   1) ANCHORS extras
   2) VOICE extras
   3) low-signal DIALOGUE
-  4) âšªtrivial EVENTS
+  4) ⚪trivial EVENTS
   5) duplicate EVENTS
   6) non-critical WORLD rows
   7) excess STATES
@@ -249,7 +249,7 @@ Always output [CURRENT]. Always terminate with "===END===".
 
 ANTI-HALLUCINATION (mandatory):
 - Do NOT invent events, scenes, dialogue, or facts not present in inputs.
-- EVENTS require explicit action â†’ consequence â†’ outcome in source material.
+- EVENTS require explicit action → consequence → outcome in source material.
 - SCENES: If no scene prose exists in inputs, omit or write as outcome summaries only.
 - VOICE entries must quote existing dialogue. Never invent phrasing.
 - ANCHORS must reference sensory details explicitly described in source text.
@@ -261,43 +261,43 @@ Input: Messages 12-18. "S12-14: Mara admits she burned the bridge to protect Ivo
 # MEMORY SHARD: Messages 12-18-MASTER
 
 [KEY]
-#=TIMELINE xref |ðŸ”´>ðŸŸ >ðŸŸ¡>ðŸŸ¢>âšª | REL:0-100 scale
+#=TIMELINE xref |🔴>🟠>🟡>🟢>⚪ | REL:0-100 scale
 Sources: Messages 12-18
 
 [TONE]
 Genre: Fantasy adventure | Style: Character-driven | POV: Third-person | Boundaries: Moderate peril
 
 [CHARACTERS]
-Mara (canonical)|Mar|protagonist|dark-haired, lean|magic-sensing (newly revealed)|active â€” fleeing
-Ivo (canonical)|none|deuteragonist|broad-shouldered|none known|active â€” fleeing with Mara
+Mara (canonical)|Mar|protagonist|dark-haired, lean|magic-sensing (newly revealed)|active — fleeing
+Ivo (canonical)|none|deuteragonist|broad-shouldered|none known|active — fleeing with Mara
 
 [WORLD]
 magic: Mara can sense magic (revealed S15:1); mechanism unknown
 
 [TIMELINE]
-(S12:1) Mara confesses burning bridge, Ivo forgives â€” riverside camp
-(S15:1) Flight at dawn, Mara reveals magic sensing â€” mountain road
-(S15:2) Landslide blocks mountain pass â€” pass entrance
+(S12:1) Mara confesses burning bridge, Ivo forgives — riverside camp
+(S15:1) Flight at dawn, Mara reveals magic sensing — mountain road
+(S15:2) Landslide blocks mountain pass — pass entrance
 
 [EVENTS]
-(S12:1) ðŸ”´ Mara confesses burning bridge to protect Ivo â†’ motive revealed â†’ Ivo forgives, commits to joint escape
-(S15:1) ðŸŸ  Mara reveals latent magic-sensing ability â†’ new capability established
-(S15:2) ðŸŸ¡ Landslide blocks mountain pass â†’ route compromised, reroute needed
-(S12:2) ðŸŸ¢ Pair departs at dawn toward mountain pass
+(S12:1) 🔴 Mara confesses burning bridge to protect Ivo → motive revealed → Ivo forgives, commits to joint escape
+(S15:1) 🟠 Mara reveals latent magic-sensing ability → new capability established
+(S15:2) 🟡 Landslide blocks mountain pass → route compromised, reroute needed
+(S12:2) 🟢 Pair departs at dawn toward mountain pass
 
 [STATES]
 (S12:1) post-confession|Mara|emo:relief, vulnerability|phys:uninjured
 (S12:1) post-forgiveness|Ivo|emo:resolved, protective|phys:uninjured
 
 [RELATIONSHIPS]
-(S12:1) [Mara]â†’[Ivo]: trust=65, intimacy=60, tension=30, hostility=5, dependency=55, affection=60, lust=50, protectiveness=60 | confession resolved conflict; bond deepened; mutual commitment to escape
+(S12:1) [Mara]→[Ivo]: trust=65, intimacy=60, tension=30, hostility=5, dependency=55, affection=60, lust=50, protectiveness=60 | confession resolved conflict; bond deepened; mutual commitment to escape
 
 [DEVELOPMENTS]
 (S15:1) Mara: ability(magic-sensing revealed)
 (S12:1) Mara: truth(bridge-burning confession resolved)
 
 [DIALOGUE]
-(S15:1) "I can feel it â€” like a hum under my skin." â€”Mara | reveals magic sensing
+(S15:1) "I can feel it — like a hum under my skin." —Mara | reveals magic sensing
 
 [VOICE]
 Ivo: "witch nose"(teasing-affectionate)
@@ -314,13 +314,13 @@ Ivo: "witch nose"(teasing-affectionate)
 (S12:1) hunter pursuit|status: DEVELOPING|intro S12:1|last S12:1|bell toll suggests proximity
 
 [SCENES]
-(S12:1) Mara's voice broke as she told Ivo about the bridge. His silence lasted three heartbeats before he reached for her hand. "Then we go together." The bell tolled once from the valley below â€” distant but clear.
+(S12:1) Mara's voice broke as she told Ivo about the bridge. His silence lasted three heartbeats before he reached for her hand. "Then we go together." The bell tolled once from the valley below — distant but clear.
 
 [CURRENT]
 Mountain Pass Entrance|Dawn|Mara, Ivo|Blocked by landslide; must find alternate route|Hunters may be approaching (bell toll)|Determined but anxious|Both uninjured
 
 Omitted: NSFW (none present).
-Calibration: ðŸ”´ confession pivot only; magic reveal ðŸŸ  (new capability); landslide ðŸŸ¡ (obstacle); departure ðŸŸ¢ (routine transit).
+Calibration: 🔴 confession pivot only; magic reveal 🟠 (new capability); landslide 🟡 (obstacle); departure 🟢 (routine transit).
 ===END===
 ===END EXAMPLE===
 
@@ -328,7 +328,7 @@ Calibration: ðŸ”´ confession pivot only; magic reveal ðŸŸ  (new capabil
 # MEMORY SHARD: [ID]-MASTER
 
 [KEY]
-#=TIMELINE xref |ðŸ”´>ðŸŸ >ðŸŸ¡>ðŸŸ¢>âšª | REL:0-100 scale
+#=TIMELINE xref |🔴>🟠>🟡>🟢>⚪ | REL:0-100 scale
 Sources: [message range or input identifier]
 
 [TONE]
@@ -344,23 +344,23 @@ category: facts (magic-system, political, geographic, temporal, cultural)
 (S{X}:{N}) anchor phrase, location
 
 [EVENTS]
-(S{X}:{N}) [Weight] action â†’ consequence â†’ outcome
+(S{X}:{N}) [Weight] action → consequence → outcome
 
 [STATES] (point-in-time emotional/physical snapshots)
 (S{X}:{N}) pos|char|emo:keywords|phys:keywords
 
 [RELATIONSHIPS]
-(S{X}:{N}) [A]â†’[B]: trust=N, intimacy=N, tension=N, hostility=N, dependency=N, affection=N, lust=N, protectiveness=N | notes
+(S{X}:{N}) [A]→[B]: trust=N, intimacy=N, tension=N, hostility=N, dependency=N, affection=N, lust=N, protectiveness=N | notes
 
 [DEVELOPMENTS] (irreversible character growth / world changes)
 (S{X}:{N}) char: type(specifics)
 
 [NSFW]
 (S{X}:{N}) participants | act
-[VERBATIM prose block â€” never compress]
+[VERBATIM prose block — never compress]
 
 [DIALOGUE] (specific plot-relevant quotes from scenes)
-(S{X}:{N}) "quote" â€”speaker | context
+(S{X}:{N}) "quote" —speaker | context
 
 [VOICE] (reusable character speech patterns/mannerisms)
 char: "quote"(tone), "quote"(tone)
@@ -375,9 +375,9 @@ char: "quote"(tone), "quote"(tone)
 (S{X}:{N}) thread|status: UNRESOLVED|DEVELOPING|ACTIVE|RESOLVED|FORESHADOWED|intro#|last#|notes
 
 [SCENES]
-(S{X}:{N}) [50-150w prose paragraph for ðŸ”´critical moments only]
+(S{X}:{N}) [50-150w prose paragraph for 🔴critical moments only]
 
-[CURRENT] (latest snapshot â€” most recent state of the story)
+[CURRENT] (latest snapshot — most recent state of the story)
 Location|Time|Present|Situation|Pending|Mood|Physical
 
 Before outputting, verify: (a) every entry traces to explicit source text, (b) section caps respected, (c) no CALLBACK/THREAD duplication, (d) relationships use absolute values 0-100, (e) [CURRENT] uses latest state only, (f) no invented quotes in VOICE or DIALOGUE, (g) terminated with ===END===.

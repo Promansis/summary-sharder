@@ -176,7 +176,7 @@ function renderSharderPromptsTab(settings, container) {
         <div class="ss-sharder-prompts-tab">
             <div class="ss-block ss-prompts-block">
                 <label>Sharder Prompt:</label>
-                <textarea id="ss-modal-single-pass-prompt" class="text_pole ss-prompts-editor">${sharderPrompts.prompt}</textarea>
+                <textarea id="ss-modal-single-pass-prompt" class="text_pole ss-prompts-editor"></textarea>
             </div>
 
             <div class="ss-buttons">
@@ -186,6 +186,7 @@ function renderSharderPromptsTab(settings, container) {
     `;
 
     const singlePassTextarea = container.querySelector('#ss-modal-single-pass-prompt');
+    singlePassTextarea.value = sharderPrompts.prompt;
 
     // Event: Sharder prompt change
     singlePassTextarea.addEventListener('input', (e) => {
@@ -218,7 +219,7 @@ function renderEventsPromptTab(settings, container) {
         <div class="ss-events-prompt-tab">
             <div class="ss-block ss-prompts-block">
                 <label>Drafting Extraction Prompt:</label>
-                <textarea id="ss-modal-events-prompt" class="text_pole ss-prompts-editor">${eventsPrompt}</textarea>
+                <textarea id="ss-modal-events-prompt" class="text_pole ss-prompts-editor"></textarea>
                 <p class="ss-prompts-hint">
                     Used by Drafting Mode to extract discrete events from chat messages.
                     Leave empty to use the default prompt.
@@ -232,6 +233,7 @@ function renderEventsPromptTab(settings, container) {
     `;
 
     const textarea = container.querySelector('#ss-modal-events-prompt');
+    textarea.value = eventsPrompt;
 
     // Event: Textarea change
     textarea.addEventListener('input', (e) => {

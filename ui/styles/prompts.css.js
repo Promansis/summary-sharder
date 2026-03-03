@@ -355,6 +355,11 @@ export const PROMPTS_CSS = `
     font-family: monospace;
     font-size: 11px;
     resize: vertical;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 .ss-prompts-buttons-row {
