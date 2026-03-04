@@ -120,14 +120,54 @@ export function getStandardCollectionId(chatId) {
 }
 
 /**
+ * Get the direct collection ID override for a chat (if any).
+ * @param {string} [chatId] - Chat ID (defaults to current chat)
+ * @returns {string|null}
+ */
+export function getCollectionIdOverride(chatId) {
+    const id = normalizeChatId(chatId || getCurrentChatId());
+    if (!id) return null;
+    const overrides = extension_settings?.summary_sharder?.collectionIdOverrides;
+    const override = overrides && typeof overrides === 'object' ? overrides[id] : null;
+    return override ? String(override) : null;
+}
+
+/**
+ * Set or clear a direct collection ID override for a chat.
+ * @param {string} [chatId] - Chat ID (defaults to current chat)
+ * @param {string|null} collectionId - Collection ID to bind, or null to clear
+ */
+export function setCollectionIdOverride(chatId, collectionId) {
+    const id = normalizeChatId(chatId || getCurrentChatId());
+    if (!id) return;
+
+    const ss = extension_settings.summary_sharder;
+    if (!ss.collectionIdOverrides || typeof ss.collectionIdOverrides !== 'object') {
+        ss.collectionIdOverrides = {};
+    }
+
+    if (!collectionId) {
+        delete ss.collectionIdOverrides[id];
+        return;
+    }
+
+    ss.collectionIdOverrides[id] = String(collectionId);
+}
+
+/**
  * Get the active collection ID based on the current mode.
  * Uses shard collection in sharder mode, standard collection otherwise.
+ * A direct collectionIdOverride takes precedence over chat-level aliases.
  * @param {string|null} [chatId] - Chat ID (defaults to current chat)
  * @param {Object} [settings] - Extension settings
  * @returns {string}
  */
 export function getActiveCollectionId(chatId, settings) {
     const resolvedChatId = normalizeChatId(chatId || getCurrentChatId());
+
+    const override = settings?.collectionIdOverrides?.[resolvedChatId];
+    if (override) return String(override);
+
     const alias = settings?.collectionAliases?.[resolvedChatId];
     const targetChatId = normalizeChatId(alias ? String(alias) : resolvedChatId);
 

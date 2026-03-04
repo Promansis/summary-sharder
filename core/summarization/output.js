@@ -21,6 +21,10 @@ import {
     vectorizeShardSectionAware,
     vectorizeStandardSummary,
 } from '../rag/vectorize.js';
+import {
+    getQdrantDimensionMismatchToastMessage,
+    isQdrantDimensionMismatchError,
+} from '../rag/vector-client.js';
 import { archiveToWarm, archiveToCold } from '../rag/archive.js';
 import { throwIfAborted } from '../api/abort-controller.js';
 
@@ -91,6 +95,10 @@ export async function handleSummaryResult(
                         await vectorizeShard(summary, startIndex, endIndex, settings, extractedKeywords);
                     }
                 } catch (error) {
+                    const backend = String(settings?.rag?.backend || '').toLowerCase();
+                    if (backend === 'qdrant' && isQdrantDimensionMismatchError(error) && typeof toastr !== 'undefined') {
+                        toastr.error(getQdrantDimensionMismatchToastMessage());
+                    }
                     ragLog.warn('Failed to vectorize shard after summary save:', error?.message || error);
                 }
             }
@@ -100,6 +108,10 @@ export async function handleSummaryResult(
                 try {
                     await vectorizeStandardSummary(summary, startIndex, endIndex, settings, extractedKeywords);
                 } catch (error) {
+                    const backend = String(settings?.ragStandard?.backend || '').toLowerCase();
+                    if (backend === 'qdrant' && isQdrantDimensionMismatchError(error) && typeof toastr !== 'undefined') {
+                        toastr.error(getQdrantDimensionMismatchToastMessage());
+                    }
                     ragLog.warn('Failed to vectorize standard summary after save:', error?.message || error);
                 }
             }

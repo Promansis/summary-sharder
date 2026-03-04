@@ -11,6 +11,98 @@ import { getAbortSignal, throwIfAborted } from '../api/abort-controller.js';
 import { ragLog } from '../logger.js';
 
 const PLUGIN_BASE = '/api/plugins/similharity';
+const QDRANT_DIMENSION_HINTS = [
+    'dimension',
+    'dimensions',
+    'vector size',
+    'expected',
+    'got',
+    'mismatch',
+    'wrong vector',
+    'invalid vector',
+];
+
+/**
+ * Plugin fetch error with endpoint + payload context.
+ */
+class PluginRequestError extends Error {
+    /**
+     * @param {{ status: number, endpoint: string, message: string, raw: string }} options
+     */
+    constructor(options) {
+        super(options.message);
+        this.name = 'PluginRequestError';
+        this.status = Number(options.status) || 0;
+        this.endpoint = String(options.endpoint || '');
+        this.raw = String(options.raw || '');
+        this.kind = 'plugin-request-failed';
+    }
+}
+
+/**
+ * @param {number} status
+ * @param {string} endpoint
+ * @param {string} rawText
+ * @returns {PluginRequestError}
+ */
+function buildPluginRequestError(status, endpoint, rawText = '') {
+    const raw = String(rawText || '').trim();
+    let details = raw;
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+            details = String(
+                parsed.error
+                ?? parsed.message
+                ?? parsed.details
+                ?? raw
+            ).trim();
+        }
+    } catch {
+        // Ignore JSON parsing errors; raw text is still useful.
+    }
+
+    return new PluginRequestError({
+        status,
+        endpoint,
+        raw,
+        message: `Plugin error (${status}) [${endpoint}]: ${details || 'Request failed'}`,
+    });
+}
+
+/**
+ * @param {any} error
+ * @returns {boolean}
+ */
+export function isQdrantDimensionMismatchError(error) {
+    const haystack = [
+        String(error?.message || ''),
+        String(error?.raw || ''),
+    ].join('\n').toLowerCase();
+
+    if (!haystack) return false;
+    return QDRANT_DIMENSION_HINTS.some(hint => haystack.includes(hint));
+}
+
+/**
+ * @returns {string}
+ */
+export function getQdrantDimensionMismatchToastMessage() {
+    return 'RAG insert failed: Qdrant vector dimensions do not match this collection. Revectorize the collection using your current RAG settings (RAG Browser -> Revectorize Collection).';
+}
+
+/**
+ * @param {any} error
+ * @param {Object|null} ragSettings
+ * @returns {'qdrant-dimension-mismatch'|'plugin-insert-failed'}
+ */
+export function classifyInsertError(error, ragSettings = null) {
+    const backend = String(ragSettings?.backend || '').toLowerCase();
+    if (backend === 'qdrant' && isQdrantDimensionMismatchError(error)) {
+        return 'qdrant-dimension-mismatch';
+    }
+    return 'plugin-insert-failed';
+}
 
 /**
  * Check whether direct embedding mode is active.
@@ -231,7 +323,7 @@ async function pluginFetch(endpoint, options = {}) {
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Plugin error (${response.status}): ${errorText}`);
+        throw buildPluginRequestError(response.status, endpoint, errorText);
     }
 
     return response.json();
@@ -310,12 +402,18 @@ export async function insertChunks(collectionId, items, ragSettings) {
         safeItems = safeItems.map((item, i) => ({ ...item, vector: vectors[i] }));
     }
 
-    const body = await buildRequestBody(collectionId, ragSettings, { items: safeItems });
-    const data = await pluginFetch('/chunks/insert', {
-        method: 'POST',
-        body,
-    });
-    return { success: data.success ?? false, inserted: data.inserted ?? 0 };
+    try {
+        const body = await buildRequestBody(collectionId, ragSettings, { items: safeItems });
+        const data = await pluginFetch('/chunks/insert', {
+            method: 'POST',
+            body,
+        });
+        return { success: data.success ?? false, inserted: data.inserted ?? 0 };
+    } catch (error) {
+        const wrapped = error instanceof Error ? error : new Error(String(error));
+        wrapped.kind = classifyInsertError(wrapped, ragSettings);
+        throw wrapped;
+    }
 }
 
 /**
@@ -483,6 +581,24 @@ export async function getEmbeddingSources() {
         ragLog.warn('Failed to get embedding sources:', error.message);
         return { sources: [] };
     }
+}
+
+/**
+ * List all collections available in the current backend/plugin context.
+ * @param {string} [backend=''] - Optional backend filter ('vectra'|'lancedb'|'qdrant'|'milvus'). Omit to use plugin default.
+ * @returns {Promise<Array<{id: string, source: string, backend: string, chunkCount: number, modelCount: number, model?: string}>>}
+ */
+export async function listAllCollections(backend = '') {
+    const url = backend
+        ? `${PLUGIN_BASE}/collections?backend=${encodeURIComponent(backend)}`
+        : `${PLUGIN_BASE}/collections`;
+    const resp = await fetch(url, {
+        method: 'GET',
+        headers: getRequestHeaders(),
+    });
+    if (!resp.ok) throw new Error(`Collections list failed: ${resp.status}`);
+    const data = await resp.json();
+    return Array.isArray(data?.collections) ? data.collections : [];
 }
 
 /**
