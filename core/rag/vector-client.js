@@ -497,10 +497,31 @@ export async function listChunks(collectionId, ragSettings, options = {}) {
         method: 'POST',
         body,
     });
+
+    // The Similharity plugin has returned different response shapes across versions/backends.
+    // Normalize here so the UI doesn't depend on one exact schema.
+    const items = data?.items ?? data?.chunks ?? data?.results ?? [];
+    const total = data?.total
+        ?? data?.chunkCount
+        ?? data?.chunk_count
+        ?? data?.totalChunks
+        ?? data?.total_chunks
+        ?? data?.totalItems
+        ?? data?.total_items
+        ?? data?.count
+        ?? data?.totalCount
+        ?? data?.total_count
+        ?? data?.pagination?.total
+        ?? data?.pagination?.count
+        ?? data?.stats?.count
+        ?? data?.stats?.total
+        ?? 0;
+    const hasMore = data?.hasMore ?? data?.has_more ?? data?.more ?? false;
+
     return {
-        items: data.items || [],
-        total: data.total ?? 0,
-        hasMore: data.hasMore ?? false,
+        items: Array.isArray(items) ? items : [],
+        total: Number(total || 0) || 0,
+        hasMore: !!hasMore,
     };
 }
 

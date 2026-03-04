@@ -9,6 +9,7 @@ import { showSsConfirm, showSsInput } from '../../common/modal-base.js';
 import {
     buildChunkHash,
     deleteChunks,
+    getCollectionStats,
     getActiveCollectionId,
     getCollectionAlias,
     getCollectionIdOverride,
@@ -99,15 +100,78 @@ function normalizeCollection(raw, fallbackBackend = '') {
         backend,
         chunkCount: Number(
             raw?.chunkCount
+            ?? raw?.chunk_count
+            ?? raw?.chunks
+            ?? raw?.chunksCount
+            ?? raw?.chunks_count
+            ?? raw?.numChunks
+            ?? raw?.num_chunks
+            ?? raw?.points
+            ?? raw?.pointCount
+            ?? raw?.point_count
+            ?? raw?.vectors
+            ?? raw?.vectorCount
+            ?? raw?.vector_count
             ?? raw?.count
             ?? raw?.total
+            ?? raw?.totalCount
+            ?? raw?.total_count
             ?? raw?.stats?.count
             ?? raw?.stats?.total
             ?? 0
         ) || 0,
-        modelCount: Number(raw?.modelCount ?? raw?.models ?? raw?.stats?.modelCount ?? 0) || 0,
-        model: String(raw?.model || '').trim(),
+        modelCount: Number(
+            raw?.modelCount
+            ?? raw?.model_count
+            ?? raw?.models
+            ?? raw?.stats?.modelCount
+            ?? raw?.stats?.model_count
+            ?? 0
+        ) || 0,
+        model: String(raw?.model ?? raw?.modelName ?? raw?.model_name ?? '').trim(),
     };
+}
+
+/**
+ * Some plugin backends may omit chunk counts from the collections list.
+ * Hydrate the selected collection's count via the stats endpoint so the modal doesn't
+ * misleadingly show "0 chunks" for non-empty collections.
+ *
+ * @param {Object} state
+ * @param {Object} dom
+ */
+async function hydrateSelectedCollectionChunkCount(state, dom) {
+    const selected = state.selectedCollection;
+    const collectionId = String(selected?.id || state.collectionId || '').trim();
+    if (!collectionId) return;
+
+    if (!state.hydratedCountIds) {
+        state.hydratedCountIds = new Set();
+    }
+    if (state.hydratedCountIds.has(collectionId)) {
+        return;
+    }
+
+    const existing = Number(selected?.chunkCount ?? 0) || 0;
+    if (existing > 0) return;
+
+    try {
+        const rag = getEffectiveRagSettings(state);
+        const { stats } = await getCollectionStats(collectionId, rag);
+        const resolved = Number(stats?.count ?? stats?.total ?? 0) || 0;
+        const target = (state.allCollections || []).find(item => item?.id === collectionId) || null;
+        if (target && resolved !== (Number(target.chunkCount ?? 0) || 0)) {
+            target.chunkCount = resolved;
+        }
+        // Selection may have changed while stats were in flight.
+        if (String(state.selectedCollection?.id || '') !== collectionId) return;
+        state.hydratedCountIds.add(collectionId);
+        updateCollectionSelector(state, dom);
+        updateStatCard(state, dom);
+    } catch (error) {
+        // Non-fatal; keep whatever count we have from the collections list.
+        ragLog.debug('Failed to hydrate collection chunk count:', error?.message || error);
+    }
 }
 
 /**
@@ -178,11 +242,15 @@ function getCollectionChatInfo(state, collectionId) {
  */
 function getEffectiveRagSettings(state) {
     const selected = state.selectedCollection || {};
+    const hasSelected = !!selected.id;
     return {
         ...(state.rag || {}),
         ...(selected.backend ? { backend: selected.backend } : {}),
         ...(selected.source ? { source: selected.source } : {}),
-        ...(selected.model ? { model: selected.model } : {}),
+        // Always override model when a collection is selected, even if its model path is ''
+        // (flat-indexed). This prevents state.rag.model from leaking in and pointing to a
+        // wrong subdirectory for collections that were indexed without a model sub-folder.
+        ...(hasSelected ? { model: selected.model || '' } : {}),
     };
 }
 
@@ -277,6 +345,7 @@ function renderModalHtml(state) {
                         <button id="ss-rag-browser-rename-btn" class="menu_button" type="button">Rename</button>
                         <button id="ss-rag-browser-link-btn" class="menu_button" type="button">Link/Unlink</button>
                         <button id="ss-rag-browser-export-btn" class="menu_button" type="button">Export</button>
+                        <button id="ss-rag-browser-import-btn" class="menu_button" type="button">Import</button>
                         <button id="ss-rag-browser-revectorize-btn" class="menu_button" type="button">Revectorize</button>
                         <button id="ss-rag-browser-delete-btn" class="menu_button ss-rag-btn-destructive" type="button">Delete</button>
                     </div>
@@ -583,7 +652,10 @@ function updateStatCard(state, dom) {
     const selected = state.selectedCollection;
     const collectionId = selected?.id || state.collectionId || 'N/A';
     const mode = getCollectionModeLabel(collectionId);
-    const chunks = Number(selected?.chunkCount ?? state.total ?? 0) || 0;
+    const chunks = Math.max(
+        Number(selected?.chunkCount || 0) || 0,
+        Number(state.total || 0) || 0,
+    );
     const source = String(selected?.source || 'N/A');
     const backend = String(selected?.backend || state.rag?.backend || 'N/A');
 
@@ -652,18 +724,31 @@ async function refreshCollections(state, dom, options = {}) {
         const knownBackends = ['vectra', 'lancedb', 'qdrant', 'milvus'];
         const backendsToQuery = state.activeBackends.length > 0 ? state.activeBackends : knownBackends;
         const results = await Promise.allSettled(backendsToQuery.map(b => listAllCollections(b)));
-        const seen = new Set();
         const allRaw = results.flatMap((r, idx) => {
             if (r.status !== 'fulfilled') return [];
-            const backend = backendsToQuery[idx];
-            return r.value.map(item => ({ ...(item || {}), backend: item?.backend || backend }));
+            const requestedBackend = String(backendsToQuery[idx] || '').trim().toLowerCase();
+            const items = Array.isArray(r.value) ? r.value : [];
+            return items.flatMap(item => {
+                const reportedBackend = String(item?.backend || '').trim().toLowerCase();
+                // Defensive: if the plugin returns mixed-backend items despite the `?backend=...` query,
+                // drop anything that explicitly reports a different backend so filters stay meaningful.
+                if (reportedBackend && requestedBackend && reportedBackend !== requestedBackend) return [];
+                return [{ ...(item || {}), backend: reportedBackend || requestedBackend }];
+            });
         });
-        const deduped = allRaw.filter(item => {
+        // Keep the entry with the highest chunkCount per backend|id key so that real data
+        // always wins over ghost empty indexes created by source-path mismatches.
+        const bestByKey = new Map();
+        for (const item of allRaw) {
             const key = `${String(item?.backend || '').toLowerCase()}|${String(item?.id || '')}`;
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-        });
+            const existing = bestByKey.get(key);
+            const existingCount = Number(existing?.chunkCount ?? 0) || 0;
+            const itemCount = Number(item?.chunkCount ?? 0) || 0;
+            if (!existing || itemCount > existingCount) {
+                bestByKey.set(key, item);
+            }
+        }
+        const deduped = [...bestByKey.values()];
         state.allCollections = deduped
             .map(item => normalizeCollection(item, item?.backend))
             .filter(Boolean)
@@ -687,6 +772,7 @@ async function refreshCollections(state, dom, options = {}) {
         updateCollectionSelector(state, dom);
         updateStatCard(state, dom);
         clearChunkView(state, dom);
+        await hydrateSelectedCollectionChunkCount(state, dom);
         state.lastCollectionsFetchAt = Date.now();
         return state.allCollections;
     })().finally(() => {
@@ -707,13 +793,26 @@ async function refreshPage(state, dom) {
     }
 
     const rag = getEffectiveRagSettings(state);
-    const { items, total } = await listChunks(state.collectionId, rag, {
+    const { items, total, hasMore } = await listChunks(state.collectionId, rag, {
         offset: state.offset,
         limit: state.limit,
     });
 
-    state.total = Number(total || 0);
     state.items = Array.isArray(items) ? items : [];
+    const totalNumber = Number(total || 0) || 0;
+
+    // Some plugin/backends may omit a stable `total` count for list endpoints.
+    // Avoid clobbering a known collection count with 0 when we have visible items.
+    if (totalNumber > 0) {
+        state.total = totalNumber;
+    } else if (!hasMore && state.offset === 0 && state.items.length > 0) {
+        state.total = state.items.length;
+    } else if (state.items.length === 0 && !hasMore && state.offset === 0) {
+        state.total = 0;
+    } else {
+        // Unknown total: keep as 0 for paging math, but don't overwrite collection metadata.
+        state.total = 0;
+    }
 
     const chunkQuery = String(state.chunkSearch || '').trim();
     const itemsToRender = chunkQuery
@@ -721,19 +820,39 @@ async function refreshPage(state, dom) {
         : state.items;
     renderChunkList(dom.items, itemsToRender);
 
-    const start = state.total === 0 ? 0 : state.offset + 1;
-    const end = Math.min(state.offset + state.limit, state.total);
+    const fallbackTotal = Number(state.selectedCollection?.chunkCount || 0) || 0;
+    const displayTotal = state.total > 0 ? state.total : fallbackTotal;
+
+    const start = (state.items.length === 0 && displayTotal === 0) ? 0 : state.offset + 1;
+    const end = state.items.length === 0 ? 0 : (state.offset + state.items.length);
+    const totalLabel = displayTotal > 0 ? String(displayTotal) : '?';
     if (dom.pageInfo) {
-        dom.pageInfo.textContent = `Showing ${start}-${end} of ${state.total} chunks`;
+        dom.pageInfo.textContent = `Showing ${start}-${end} of ${totalLabel} chunks`;
     }
     if (dom.prevBtn) dom.prevBtn.disabled = state.offset <= 0;
-    if (dom.nextBtn) dom.nextBtn.disabled = state.offset + state.limit >= state.total;
+    if (dom.nextBtn) {
+        if (displayTotal > 0) {
+            dom.nextBtn.disabled = end >= displayTotal;
+        } else {
+            dom.nextBtn.disabled = !hasMore;
+        }
+    }
 
     if (state.selectedCollection) {
-        state.selectedCollection.chunkCount = state.total;
+        // Only update the cached collection count when Browse returned real data.
+        // Never overwrite a non-zero scan count with 0 — an empty result could mean
+        // the plugin looked in the wrong path (ghost index), not that the collection is empty.
+        if (state.total > 0) {
+            state.selectedCollection.chunkCount = state.total;
+        }
     }
     updateCollectionSelector(state, dom);
     updateStatCard(state, dom);
+
+    // If we still don't have a reliable count but we do have items, hydrate from stats.
+    if ((Number(state.selectedCollection?.chunkCount ?? 0) || 0) === 0 && state.items.length > 0) {
+        await hydrateSelectedCollectionChunkCount(state, dom);
+    }
 }
 
 /**
@@ -1172,6 +1291,199 @@ async function handleExport(state) {
         );
     }
     toastr.success(`Exported ${allChunks.length} chunks as ${format.toUpperCase()}`);
+}
+
+/**
+ * @returns {Promise<File|null>}
+ */
+function pickImportFile() {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.json,.csv';
+        let resolved = false;
+        const finish = (file) => {
+            if (resolved) return;
+            resolved = true;
+            resolve(file ?? null);
+        };
+        input.addEventListener('change', () => finish(input.files?.[0] ?? null));
+        input.addEventListener('cancel', () => finish(null));
+        input.click();
+    });
+}
+
+/**
+ * Parse a RFC-4180 CSV string into an array of row arrays.
+ * Handles quoted fields with embedded commas, newlines, and escaped quotes.
+ * @param {string} csvText
+ * @returns {string[][]}
+ */
+function parseCsvRows(csvText) {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+    const text = String(csvText || '');
+
+    for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuotes) {
+            if (ch === '"' && text[i + 1] === '"') {
+                field += '"';
+                i++;
+            } else if (ch === '"') {
+                inQuotes = false;
+            } else {
+                field += ch;
+            }
+        } else if (ch === '"') {
+            inQuotes = true;
+        } else if (ch === ',') {
+            row.push(field);
+            field = '';
+        } else if (ch === '\r') {
+            if (text[i + 1] === '\n') i++;
+            row.push(field);
+            field = '';
+            rows.push(row);
+            row = [];
+        } else if (ch === '\n') {
+            row.push(field);
+            field = '';
+            rows.push(row);
+            row = [];
+        } else {
+            field += ch;
+        }
+    }
+
+    row.push(field);
+    if (row.some(f => f !== '')) rows.push(row);
+
+    return rows;
+}
+
+/**
+ * Parse a CSV string (as produced by chunksToCsv) into chunk objects.
+ * @param {string} csvText
+ * @returns {Array<{hash: any, text: string, index: number, metadata: Object}>}
+ */
+function csvToChunks(csvText) {
+    const rows = parseCsvRows(csvText);
+    if (rows.length < 2) return [];
+
+    const header = rows[0].map(h => String(h || '').trim().toLowerCase());
+    const col = (row, name) => {
+        const idx = header.indexOf(name);
+        return idx >= 0 ? String(row[idx] ?? '') : '';
+    };
+
+    const chunks = [];
+    for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length === 0) continue;
+
+        const text = col(row, 'text');
+        if (!text) continue;
+
+        const hashRaw = col(row, 'hash');
+        const indexRaw = col(row, 'index');
+        const index = Number.isFinite(Number(indexRaw)) ? Number(indexRaw) : 0;
+        const hash = hashRaw || buildChunkHash(`${index}|${text}`);
+
+        const keywordsRaw = col(row, 'keywords');
+        const keywords = keywordsRaw ? keywordsRaw.split('|').map(k => k.trim()).filter(Boolean) : [];
+
+        const metadata = {};
+        if (keywords.length > 0) metadata.keywords = keywords;
+        const importance = col(row, 'importance');
+        if (importance !== '') metadata.importance = isNaN(Number(importance)) ? importance : Number(importance);
+        const sceneCode = col(row, 'scenecode');
+        if (sceneCode) metadata.sceneCode = sceneCode;
+        const speaker = col(row, 'speaker');
+        if (speaker) metadata.speaker = speaker;
+        const characterName = col(row, 'charactername');
+        if (characterName) metadata.characterName = characterName;
+        const timestamp = col(row, 'timestamp');
+        if (timestamp) metadata.timestamp = timestamp;
+        if (col(row, 'disabled') === 'true') metadata.disabled = true;
+
+        chunks.push({ hash, text, index, metadata });
+    }
+    return chunks;
+}
+
+/**
+ * @param {string} fileName
+ * @param {string} content
+ * @returns {Array<{hash: any, text: string, index: number, metadata: Object}>}
+ */
+function parseImportFile(fileName, content) {
+    const ext = String(fileName || '').split('.').pop().toLowerCase();
+    if (ext === 'csv') {
+        return csvToChunks(content);
+    }
+    const parsed = JSON.parse(content);
+    if (!Array.isArray(parsed)) {
+        throw new Error('JSON import must be an array of chunks');
+    }
+    return parsed
+        .filter(item => item && typeof item === 'object' && String(item.text || '').trim())
+        .map(item => ({
+            hash: item.hash,
+            text: String(item.text || '').trim(),
+            index: Number.isFinite(Number(item.index)) ? Number(item.index) : 0,
+            metadata: (item.metadata && typeof item.metadata === 'object') ? { ...item.metadata } : {},
+        }));
+}
+
+/**
+ * @param {Object} state
+ * @param {Object} dom
+ */
+async function handleImport(state, dom) {
+    if (!state.collectionId) {
+        toastr.warning('Select a collection first');
+        return;
+    }
+
+    const file = await pickImportFile();
+    if (!file) return;
+
+    let chunks;
+    try {
+        const content = await file.text();
+        chunks = parseImportFile(file.name, content);
+    } catch (error) {
+        toastr.error(`Failed to parse file: ${error?.message || error}`);
+        return;
+    }
+
+    if (chunks.length === 0) {
+        toastr.warning('No valid chunks found in file');
+        return;
+    }
+
+    const confirmed = await showSsConfirm(
+        'Import Chunks',
+        `Import ${chunks.length} chunk(s) into "${state.collectionId}"?\nExisting chunks with the same hash will be overwritten.`,
+    );
+    if (confirmed !== POPUP_RESULT.AFFIRMATIVE) return;
+
+    const rag = getEffectiveRagSettings(state);
+    toastr.info(`Importing ${chunks.length} chunk(s)...`);
+
+    let inserted = 0;
+    for (let i = 0; i < chunks.length; i += REVECTORIZE_INSERT_BATCH_SIZE) {
+        const batch = chunks.slice(i, i + REVECTORIZE_INSERT_BATCH_SIZE);
+        const result = await insertChunks(state.collectionId, batch, rag);
+        inserted += Number(result?.inserted ?? batch.length) || 0;
+    }
+
+    toastr.success(`Imported ${inserted} chunk(s) into ${state.collectionId}`);
+    await refreshCollections(state, dom, { preferredCollectionId: state.collectionId, force: true });
+    await refreshPage(state, dom);
 }
 
 /**
@@ -1627,6 +1939,7 @@ export async function openRagBrowserModal(settings) {
             renameBtn: document.getElementById('ss-rag-browser-rename-btn'),
             linkBtn: document.getElementById('ss-rag-browser-link-btn'),
             exportBtn: document.getElementById('ss-rag-browser-export-btn'),
+            importBtn: document.getElementById('ss-rag-browser-import-btn'),
             revectorizeBtn: document.getElementById('ss-rag-browser-revectorize-btn'),
             deleteBtn: document.getElementById('ss-rag-browser-delete-btn'),
             pageInfo: document.getElementById('ss-rag-browser-page-info'),
@@ -1652,11 +1965,12 @@ export async function openRagBrowserModal(settings) {
             }
         });
 
-        const chooseCollection = (collectionId) => {
+        const chooseCollection = async (collectionId) => {
             setSelectedCollection(state, collectionId);
             updateCollectionSelector(state, dom);
             updateStatCard(state, dom);
             clearChunkView(state, dom);
+            await hydrateSelectedCollectionChunkCount(state, dom);
         };
 
         modalRoot?.addEventListener('click', (event) => {
@@ -1777,7 +2091,7 @@ export async function openRagBrowserModal(settings) {
             updateCollectionSelector(state, dom);
         });
 
-        dom.collectionOptions?.addEventListener('click', (event) => {
+        dom.collectionOptions?.addEventListener('click', async (event) => {
             const item = event.target instanceof Element
                 ? event.target.closest('.ss-rag-collection-dropdown-item')
                 : null;
@@ -1785,7 +2099,7 @@ export async function openRagBrowserModal(settings) {
             const selectedId = String(item.getAttribute('data-id') || '').trim();
             if (!selectedId) return;
             closeCollectionMenu();
-            chooseCollection(selectedId);
+            await chooseCollection(selectedId);
         });
 
         document.addEventListener('click', (event) => {
@@ -1885,6 +2199,17 @@ export async function openRagBrowserModal(settings) {
             } catch (error) {
                 ragLog.warn('Export failed:', error?.message || error);
                 toastr.error(`Export failed: ${error?.message || error}`);
+            }
+        });
+
+        dom.importBtn?.addEventListener('click', async () => {
+            try {
+                await handleImport(state, dom);
+            } catch (error) {
+                ragLog.warn('Import failed:', error?.message || error);
+                if (!showQdrantMismatchToastIfNeeded(error, String(getEffectiveRagSettings(state)?.backend || ''))) {
+                    toastr.error(`Import failed: ${error?.message || error}`);
+                }
             }
         });
 
