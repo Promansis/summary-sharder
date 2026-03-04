@@ -921,7 +921,10 @@ function buildEditedChunk(item, newText, metadataPatch = {}) {
     const index = Number.isFinite(Number(item?.index))
         ? Number(item.index)
         : Number(metadata.messageIndex ?? 0);
-    const hash = item?.hash ?? buildChunkHash(`${index}|${normalized}`);
+
+    // Always generate a new hash based on the updated text to ensure Vectra treats this as a new chunk
+    // rather than attempting an upsert that may not update the text content properly
+    const hash = buildChunkHash(`${index}|${normalized}`);
 
     return {
         text: normalized,
@@ -1094,6 +1097,8 @@ function showChunkEditModal(item) {
             saveBtn?.addEventListener('click', () => {
                 if (resolved) return;
                 const text = String(textarea?.value || '').trim();
+                ragLog.debug('[RAG Edit] Captured text from textarea:', text);
+                ragLog.debug('[RAG Edit] Original item text:', String(item?.text || ''));
                 if (!text) {
                     toastr.warning('Chunk text cannot be empty');
                     return;
@@ -1749,6 +1754,8 @@ async function handleChunkEdit(state, item, hash, dom) {
     if (!result) return;
 
     const text = String(result.text || '').trim();
+    ragLog.debug('[RAG Edit] Result from modal:', result);
+    ragLog.debug('[RAG Edit] Text to save:', text);
     if (!text) {
         toastr.warning('Chunk text cannot be empty');
         return;
@@ -1778,6 +1785,8 @@ async function handleChunkEdit(state, item, hash, dom) {
         keywords: nextKeywords,
         keywordWeights: nextWeights,
     });
+    ragLog.debug('[RAG Edit] Updated chunk to insert:', updatedChunk);
+    ragLog.debug('[RAG Edit] Deleting old hash:', hash);
     const rag = getEffectiveRagSettings(state);
     await deleteChunks(state.collectionId, [hash], rag);
     await insertChunks(state.collectionId, [updatedChunk], rag);
