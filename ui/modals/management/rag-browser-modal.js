@@ -1718,7 +1718,8 @@ async function handleRevectorizeCollection(state, dom) {
         backend: selectedBackend || draftBackend || 'vectra',
     };
 
-    const chunks = await collectCollectionForRevectorize(state.collectionId, ragSettings);
+    const readRagSettings = getEffectiveRagSettings(state);
+    const chunks = await collectCollectionForRevectorize(state.collectionId, readRagSettings);
     toastr.info(`Revectorizing ${chunks.length} chunk(s)...`);
 
     await purgeCollection(state.collectionId, ragSettings);
