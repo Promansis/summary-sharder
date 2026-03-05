@@ -201,11 +201,15 @@ export async function archiveToWarm(items, startIndex, endIndex, settings, metad
             item.text,
         ].join('|');
 
+        const hash = buildChunkHash(hashIdentity);
+
         return {
             text: item.text,
-            hash: buildChunkHash(hashIdentity),
+            hash,
             index: range.startIndex,
             metadata: {
+                hash,
+                text: item.text,
                 isSummaryChunk: true,
                 startIndex: range.startIndex,
                 endIndex: range.endIndex,

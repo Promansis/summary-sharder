@@ -396,10 +396,18 @@ export async function insertChunks(collectionId, items, ragSettings) {
         })
         : (items || []);
 
-    if (isDirectEmbeddingMode(ragSettings)) {
+    const isDirect = isDirectEmbeddingMode(ragSettings);
+
+    if (isDirect) {
         const texts = safeItems.map(item => String(item.text || ''));
-        const vectors = await fetchDirectEmbedding(texts, ragSettings);
-        safeItems = safeItems.map((item, i) => ({ ...item, vector: vectors[i] }));
+
+        try {
+            const vectors = await fetchDirectEmbedding(texts, ragSettings);
+            safeItems = safeItems.map((item, i) => ({ ...item, vector: vectors[i] }));
+        } catch (error) {
+            console.error('[Vector Client] Embedding fetch failed:', error);
+            throw new Error(`Failed to fetch embeddings: ${error?.message || error}`);
+        }
     }
 
     try {
@@ -408,6 +416,7 @@ export async function insertChunks(collectionId, items, ragSettings) {
             method: 'POST',
             body,
         });
+
         return { success: data.success ?? false, inserted: data.inserted ?? 0 };
     } catch (error) {
         const wrapped = error instanceof Error ? error : new Error(String(error));
@@ -542,6 +551,7 @@ export async function deleteChunks(collectionId, hashes, ragSettings) {
         method: 'POST',
         body,
     });
+
     return { success: data.success ?? false, deleted: data.deleted ?? 0 };
 }
 

@@ -926,6 +926,11 @@ function buildEditedChunk(item, newText, metadataPatch = {}) {
     // rather than attempting an upsert that may not update the text content properly
     const hash = buildChunkHash(`${index}|${normalized}`);
 
+    // CRITICAL: Update metadata to reflect the new hash and text
+    // Otherwise Vectra will store the old values in metadata and retrieve them on list
+    metadata.hash = hash;
+    metadata.text = normalized;
+
     return {
         text: normalized,
         hash,
@@ -1049,11 +1054,16 @@ function showChunkEditModal(item) {
 
         const showPromise = popup.show();
 
-        requestAnimationFrame(() => {
+        const setupEventListeners = () => {
             const tagHost = document.getElementById('ss-rag-edit-tag-host');
             const tagInput = document.getElementById('ss-rag-edit-tag-input');
             const textarea = document.getElementById('ss-rag-edit-text');
             const saveBtn = document.getElementById('ss-rag-edit-save');
+
+            if (!textarea || !saveBtn) {
+                ragLog.warn('[RAG Edit Modal] Required elements not found, retrying...');
+                return false;
+            }
 
             renderTags(tagHost);
             textarea?.focus();
@@ -1097,8 +1107,6 @@ function showChunkEditModal(item) {
             saveBtn?.addEventListener('click', () => {
                 if (resolved) return;
                 const text = String(textarea?.value || '').trim();
-                ragLog.debug('[RAG Edit] Captured text from textarea:', text);
-                ragLog.debug('[RAG Edit] Original item text:', String(item?.text || ''));
                 if (!text) {
                     toastr.warning('Chunk text cannot be empty');
                     return;
@@ -1119,6 +1127,19 @@ function showChunkEditModal(item) {
                 popup.complete(POPUP_RESULT.AFFIRMATIVE);
                 resolve({ text, keywords, keywordWeights });
             });
+
+            return true;
+        };
+
+        // Try to set up event listeners with retries
+        requestAnimationFrame(() => {
+            if (!setupEventListeners()) {
+                setTimeout(() => {
+                    if (!setupEventListeners()) {
+                        ragLog.error('[RAG Edit Modal] Failed to find modal elements after retries');
+                    }
+                }, 100);
+            }
         });
 
         showPromise.then(() => {
@@ -1401,6 +1422,8 @@ function csvToChunks(csvText) {
         const keywords = keywordsRaw ? keywordsRaw.split('|').map(k => k.trim()).filter(Boolean) : [];
 
         const metadata = {};
+        metadata.hash = hash;
+        metadata.text = text;
         if (keywords.length > 0) metadata.keywords = keywords;
         const importance = col(row, 'importance');
         if (importance !== '') metadata.importance = isNaN(Number(importance)) ? importance : Number(importance);
@@ -1652,6 +1675,9 @@ async function collectCollectionForRevectorize(collectionId, ragSettings) {
                 ? existingHash
                 : buildChunkHash(`${index}|${text}`);
 
+            metadata.hash = hash;
+            metadata.text = text;
+
             return {
                 hash,
                 text,
@@ -1754,8 +1780,6 @@ async function handleChunkEdit(state, item, hash, dom) {
     if (!result) return;
 
     const text = String(result.text || '').trim();
-    ragLog.debug('[RAG Edit] Result from modal:', result);
-    ragLog.debug('[RAG Edit] Text to save:', text);
     if (!text) {
         toastr.warning('Chunk text cannot be empty');
         return;
@@ -1785,12 +1809,45 @@ async function handleChunkEdit(state, item, hash, dom) {
         keywords: nextKeywords,
         keywordWeights: nextWeights,
     });
-    ragLog.debug('[RAG Edit] Updated chunk to insert:', updatedChunk);
-    ragLog.debug('[RAG Edit] Deleting old hash:', hash);
     const rag = getEffectiveRagSettings(state);
-    await deleteChunks(state.collectionId, [hash], rag);
-    await insertChunks(state.collectionId, [updatedChunk], rag);
-    toastr.success('Chunk updated');
+
+    // Delete old chunk
+    try {
+        const deleteResult = await deleteChunks(state.collectionId, [hash], rag);
+
+        if (!deleteResult.success) {
+            throw new Error(`Delete failed: ${deleteResult.deleted} chunks deleted`);
+        }
+    } catch (error) {
+        console.error('[RAG Edit] Delete failed:', error);
+        toastr.error(`Failed to delete old chunk: ${error?.message || error}`);
+        return;
+    }
+
+    // Insert updated chunk
+    try {
+        const insertResult = await insertChunks(state.collectionId, [updatedChunk], rag);
+
+        if (!insertResult.success || insertResult.inserted === 0) {
+            throw new Error(`Insert failed: ${insertResult.inserted} chunks inserted`);
+        }
+
+        toastr.success('Chunk updated');
+    } catch (error) {
+        console.error('[RAG Edit] Insert failed:', error);
+
+        // Attempt to restore original chunk
+        try {
+            const originalChunk = buildEditedChunk(item, String(item?.text || ''), {});
+            await insertChunks(state.collectionId, [originalChunk], rag);
+            toastr.error(`Failed to save changes: ${error?.message || error}. Original chunk restored.`);
+        } catch (restoreError) {
+            console.error('[RAG Edit] Restore failed:', restoreError);
+            toastr.error(`Failed to save changes AND restore original: ${error?.message || error}`);
+        }
+        return;
+    }
+
     await refreshPage(state, dom);
 }
 
@@ -1988,10 +2045,7 @@ export async function openRagBrowserModal(settings) {
             if (target.closest('.ss-rag-browser-item-toggle')) {
                 event.stopPropagation();
             }
-            if (target.closest('.ss-rag-browser-item-actions')) {
-                event.preventDefault();
-                event.stopPropagation();
-            }
+            // Don't preventDefault/stopPropagation on action buttons - let the second handler process them
         });
 
         modalRoot?.addEventListener('change', async (event) => {

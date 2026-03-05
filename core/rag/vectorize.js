@@ -244,6 +244,8 @@ export function buildSingleMessageChunk(message, messageIndex) {
     const normalizedText = String(chunk.text || '').trim();
     const identity = `${messageIndex}|${normalizedText}`;
     chunk.hash = buildChunkHash(identity);
+    chunk.metadata.hash = chunk.hash;
+    chunk.metadata.text = normalizedText;
 
     const kws = extractKeywordsTfIdf(chunk.text);
     chunk.metadata.keywords = kws;

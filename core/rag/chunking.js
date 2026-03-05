@@ -161,12 +161,16 @@ function buildChatMetadata(messageIndex, message) {
 function makeChunk(text, index, metadata) {
     const normalizedText = String(text || '').trim();
     const identity = `${index}|${normalizedText}`;
+    const hash = buildChunkHash(identity);
+
+    // Ensure metadata always contains the hash and text to prevent backend inconsistencies
+    const safeMetadata = { ...metadata, hash, text: normalizedText };
 
     return {
         text: normalizedText,
-        hash: buildChunkHash(identity),
+        hash,
         index,
-        metadata,
+        metadata: safeMetadata,
     };
 }
 
@@ -550,6 +554,8 @@ export function chunkShardBySection(shardText, startIdx, endIdx, keywords = [], 
             freshnessEndIndex: endIndex,
         });
         chunk.hash = buildChunkHash(`${index}|superseding|${text}|${startIndex}|${endIndex}`);
+        chunk.metadata.hash = chunk.hash;
+        chunk.metadata.text = chunk.text;
         chunks.push(chunk);
     }
 
@@ -605,6 +611,8 @@ export function chunkShardBySection(shardText, startIdx, endIdx, keywords = [], 
             freshnessEndIndex: endIndex,
         });
         chunk.hash = buildChunkHash(`${index}|cumulative|${sceneCode || 'none'}|${text}|${startIndex}|${endIndex}`);
+        chunk.metadata.hash = chunk.hash;
+        chunk.metadata.text = chunk.text;
         chunks.push(chunk);
     }
 
@@ -640,6 +648,8 @@ export function chunkShardBySection(shardText, startIdx, endIdx, keywords = [], 
                 freshnessEndIndex: endIndex,
             });
             chunk.hash = buildChunkHash(`${index}|rolling|${sectionKey}|${entityKey}|${sceneCode || 'none'}|${item}|${startIndex}|${endIndex}`);
+            chunk.metadata.hash = chunk.hash;
+            chunk.metadata.text = chunk.text;
             chunks.push(chunk);
 
             const isResolvedCallback = sectionKey === 'callbacks' && status === 'FIRED';
@@ -798,6 +808,8 @@ export function chunkShardBySceneCodes(shardText, startIdx, endIdx, keywords = [
         const chunk = chunkShardSceneAware(bucketText, startIdx, endIdx, keywords, code);
         chunk.index = (Number.isFinite(startIdx) ? startIdx : 0) + offset;
         chunk.hash = buildChunkHash(`${chunk.index}|${bucketText}|${code}`);
+        chunk.metadata.hash = chunk.hash;
+        chunk.metadata.text = chunk.text;
         chunks.push(chunk);
         offset += 1;
     }
