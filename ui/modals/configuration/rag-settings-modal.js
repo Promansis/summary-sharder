@@ -8,6 +8,7 @@ import { openRagBrowserModal } from '../management/rag-browser-modal.js';
 import { openRagDebugModal } from '../management/rag-debug-modal.js';
 import { LorebookDropdown } from '../../dropdowns/lorebook-dropdown.js';
 import { createSegmentedToggle, createRangeSliderPair, infoHintHtml, mountInfoHints } from '../../common/index.js';
+import { debounce } from '../../common/ui-utils.js';
 import { showSsConfirm } from '../../common/modal-base.js';
 import {
     checkPluginAvailability,
@@ -202,6 +203,7 @@ function renderModalHtml(rag, isSharder) {
                     </div>
                     <p id="ss-rag-embedding-test-status" class="ss-rag-inline-hint ss-text-hint">Embedding source test: not run</p>
                     <p id="ss-rag-reranker-test-status" class="ss-rag-inline-hint ss-text-hint">Re-ranker test: not run</p>
+                    <p id="ss-rag-autosave-status" class="ss-rag-inline-hint ss-text-hint">All changes autosave.</p>
                 </div>
                 <div id="ss-rag-warning" class="ss-rag-warning ss-hidden"></div>
 
@@ -285,6 +287,7 @@ function renderModalHtml(rag, isSharder) {
                             <label for="ss-rag-embedding-key">Embedding API Key (secure storage)</label>
                             <input id="ss-rag-embedding-key" class="text_pole" type="password" value="" placeholder="Enter new key to update; leave blank to keep current" />
                             <div class="ss-rag-actions-row ss-rag-actions-row-tight">
+                                <input id="ss-rag-store-embedding-key" class="menu_button" type="button" value="Store Key" />
                                 <input id="ss-rag-clear-embedding-key" class="menu_button" type="button" value="Clear Key" />
                             </div>
                             <p id="ss-rag-embedding-key-status" class="ss-rag-inline-hint ss-text-hint">Checking secure key status...</p>
@@ -363,6 +366,7 @@ function renderModalHtml(rag, isSharder) {
                                 <label for="ss-rag-reranker-key">Re-ranker API Key (secure storage)</label>
                                 <input id="ss-rag-reranker-key" class="text_pole" type="password" value="" placeholder="Enter new key to update; leave blank to keep current" />
                                 <div class="ss-rag-actions-row ss-rag-actions-row-tight">
+                                    <input id="ss-rag-store-reranker-key" class="menu_button" type="button" value="Store Key" />
                                     <input id="ss-rag-clear-reranker-key" class="menu_button" type="button" value="Clear Key" />
                                 </div>
                                 <p id="ss-rag-reranker-key-status" class="ss-rag-inline-hint ss-text-hint">Checking secure key status...</p>
@@ -1299,8 +1303,8 @@ export async function openRagSettingsModal(settings) {
         POPUP_TYPE.TEXT,
         null,
         {
-            okButton: 'Save',
-            cancelButton: 'Cancel',
+            okButton: 'Close',
+            cancelButton: null,
             wide: true,
             large: false,
         },
@@ -1321,6 +1325,62 @@ export async function openRagSettingsModal(settings) {
     };
     let pendingEmbeddingKey = '';
     let pendingRerankerKey = '';
+    const syncSecretIdsToActiveConfigs = () => {
+        const ragBlock = settings[ragBlockKey];
+        if (!ragBlock) return;
+
+        const source = ragBlock.source || 'transformers';
+        if (!ragBlock.sourceConfigs || typeof ragBlock.sourceConfigs !== 'object') {
+            ragBlock.sourceConfigs = {};
+        }
+        if (!ragBlock.sourceConfigs[source]) {
+            ragBlock.sourceConfigs[source] = {};
+        }
+        ragBlock.sourceConfigs[source].embeddingSecretId = ragBlock.embeddingSecretId || null;
+        ragBlock.sourceConfigs[source].apiUrl = ragBlock.apiUrl || '';
+        ragBlock.sourceConfigs[source].model = ragBlock.model || '';
+
+        if (!ragBlock.reranker || typeof ragBlock.reranker !== 'object') {
+            ragBlock.reranker = {};
+        }
+        const provider = ragBlock.reranker.provider || 'similharity';
+        if (!ragBlock.reranker.providerConfigs || typeof ragBlock.reranker.providerConfigs !== 'object') {
+            ragBlock.reranker.providerConfigs = {};
+        }
+        if (!ragBlock.reranker.providerConfigs[provider]) {
+            ragBlock.reranker.providerConfigs[provider] = {};
+        }
+        ragBlock.reranker.providerConfigs[provider].secretId = ragBlock.reranker.secretId || null;
+        ragBlock.reranker.providerConfigs[provider].apiUrl = ragBlock.reranker.apiUrl || '';
+        ragBlock.reranker.providerConfigs[provider].model = ragBlock.reranker.model || '';
+    };
+    const syncLiveDraftSecretIdsFromSettings = () => {
+        const ragBlock = settings[ragBlockKey];
+        if (!ragBlock) return;
+
+        liveDraft.embeddingSecretId = ragBlock.embeddingSecretId || null;
+        if (!liveDraft.sourceConfigs || typeof liveDraft.sourceConfigs !== 'object') {
+            liveDraft.sourceConfigs = {};
+        }
+        const source = liveDraft.source || ragBlock.source || 'transformers';
+        if (!liveDraft.sourceConfigs[source]) {
+            liveDraft.sourceConfigs[source] = {};
+        }
+        liveDraft.sourceConfigs[source].embeddingSecretId = liveDraft.embeddingSecretId;
+
+        if (!liveDraft.reranker || typeof liveDraft.reranker !== 'object') {
+            liveDraft.reranker = {};
+        }
+        liveDraft.reranker.secretId = ragBlock.reranker?.secretId || null;
+        if (!liveDraft.reranker.providerConfigs || typeof liveDraft.reranker.providerConfigs !== 'object') {
+            liveDraft.reranker.providerConfigs = {};
+        }
+        const provider = liveDraft.reranker.provider || ragBlock.reranker?.provider || 'similharity';
+        if (!liveDraft.reranker.providerConfigs[provider]) {
+            liveDraft.reranker.providerConfigs[provider] = {};
+        }
+        liveDraft.reranker.providerConfigs[provider].secretId = liveDraft.reranker.secretId;
+    };
 
     requestAnimationFrame(async () => {
         let vectorizationLorebookDropdown = null;
@@ -1329,6 +1389,29 @@ export async function openRagSettingsModal(settings) {
         const syncDraftFromDom = () => {
             liveDraft = readRagDraft(liveDraft, isSharder);
         };
+        const autosaveStatusEl = document.getElementById('ss-rag-autosave-status');
+        const setAutosaveStatus = (message) => {
+            if (!autosaveStatusEl) return;
+            autosaveStatusEl.textContent = message;
+        };
+        const persistDraft = () => {
+            syncDraftFromDom();
+            applyRagSettings(settings, liveDraft, ragBlockKey);
+            syncSecretIdsToActiveConfigs();
+
+            try {
+                saveSettings(settings);
+                setAutosaveStatus('Saved.');
+                return true;
+            } catch (error) {
+                ragLog.warn('RAG settings autosave failed:', error?.message || error);
+                setAutosaveStatus('Save failed. Check logs.');
+                return false;
+            }
+        };
+        const persistDraftDebounced = debounce(() => {
+            persistDraft();
+        }, 400);
 
         const updateVectorizationLorebookUi = () => {
             const enabled = !!document.getElementById('ss-rag-use-lorebooks-vectorization')?.checked;
@@ -1346,6 +1429,8 @@ export async function openRagSettingsModal(settings) {
                         : [],
                     onSelectionChange: (selection) => {
                         liveDraft.vectorizationLorebookNames = Array.isArray(selection) ? [...selection] : [];
+                        setAutosaveStatus('Saving...');
+                        persistDraft();
                     },
                 });
             }
@@ -1423,6 +1508,7 @@ export async function openRagSettingsModal(settings) {
             updateVectorizationLorebookUi();
 
             liveDraft = readRagDraft(liveDraft, isSharder);
+            persistDraft();
             await runStatusChecks(liveDraft);
             if (collectionId) {
                 await updateStats(liveDraft, collectionId);
@@ -1592,8 +1678,26 @@ export async function openRagSettingsModal(settings) {
         });
 
         for (const control of document.querySelectorAll('.ss-rag-control')) {
-            control.addEventListener('input', syncDraftFromDom);
-            control.addEventListener('change', syncDraftFromDom);
+            const isTextLikeControl = control.matches('input[type="text"], input[type="password"], input[type="number"], textarea');
+            control.addEventListener('input', () => {
+                syncDraftFromDom();
+                if (isTextLikeControl) {
+                    setAutosaveStatus('Saving...');
+                    persistDraftDebounced();
+                }
+            });
+            control.addEventListener('change', () => {
+                syncDraftFromDom();
+                setAutosaveStatus('Saving...');
+                persistDraft();
+            });
+
+            if (isTextLikeControl) {
+                control.addEventListener('blur', () => {
+                    setAutosaveStatus('Saving...');
+                    persistDraft();
+                });
+            }
         }
 
         embeddingKeyInput?.addEventListener('input', () => {
@@ -1706,6 +1810,30 @@ export async function openRagSettingsModal(settings) {
             updateVectorizationLorebookUi();
         });
 
+        document.getElementById('ss-rag-store-reranker-key')?.addEventListener('click', async () => {
+            const newRerankerKey = String(pendingRerankerKey || '').trim();
+            if (!newRerankerKey) {
+                toastr.warning('Enter a re-ranker key first');
+                return;
+            }
+
+            const stored = await storeRagRerankerApiKey(buildSecretSettingsView(), newRerankerKey);
+            if (!stored) {
+                toastr.error('Failed to store re-ranker API key securely');
+                return;
+            }
+
+            pendingRerankerKey = '';
+            if (rerankerKeyInput) {
+                rerankerKeyInput.value = '';
+            }
+            syncLiveDraftSecretIdsFromSettings();
+            setAutosaveStatus('Saving...');
+            persistDraft();
+            await refreshRerankerKeyStatus();
+            toastr.success('Re-ranker API key stored securely');
+        });
+
         document.getElementById('ss-rag-clear-reranker-key')?.addEventListener('click', async () => {
             const confirm = await showSsConfirm(
                 'Clear Re-ranker API Key',
@@ -1720,7 +1848,9 @@ export async function openRagSettingsModal(settings) {
             if (rerankerKeyInput) {
                 rerankerKeyInput.value = '';
             }
-            saveSettings(settings);
+            syncLiveDraftSecretIdsFromSettings();
+            setAutosaveStatus('Saving...');
+            persistDraft();
             await refreshRerankerKeyStatus();
             if (deleted) {
                 toastr.success('Stored re-ranker API key cleared');
@@ -1805,6 +1935,30 @@ export async function openRagSettingsModal(settings) {
             }
         });
 
+        document.getElementById('ss-rag-store-embedding-key')?.addEventListener('click', async () => {
+            const newEmbeddingKey = String(pendingEmbeddingKey || '').trim();
+            if (!newEmbeddingKey) {
+                toastr.warning('Enter an embedding key first');
+                return;
+            }
+
+            const stored = await storeRagEmbeddingApiKey(buildSecretSettingsView(), newEmbeddingKey);
+            if (!stored) {
+                toastr.error('Failed to store embedding API key securely');
+                return;
+            }
+
+            pendingEmbeddingKey = '';
+            if (embeddingKeyInput) {
+                embeddingKeyInput.value = '';
+            }
+            syncLiveDraftSecretIdsFromSettings();
+            setAutosaveStatus('Saving...');
+            persistDraft();
+            await refreshEmbeddingKeyStatus();
+            toastr.success('Embedding API key stored securely');
+        });
+
         document.getElementById('ss-rag-clear-embedding-key')?.addEventListener('click', async () => {
             const confirm = await showSsConfirm(
                 'Clear Embedding API Key',
@@ -1819,7 +1973,9 @@ export async function openRagSettingsModal(settings) {
             if (embeddingKeyInput) {
                 embeddingKeyInput.value = '';
             }
-            saveSettings(settings);
+            syncLiveDraftSecretIdsFromSettings();
+            setAutosaveStatus('Saving...');
+            persistDraft();
             await refreshEmbeddingKeyStatus();
             if (deleted) {
                 toastr.success('Stored embedding API key cleared');
@@ -1952,52 +2108,6 @@ export async function openRagSettingsModal(settings) {
         });
     });
 
-    const result = await showPromise;
-    if (result !== POPUP_RESULT.AFFIRMATIVE) {
-        return;
-    }
-
-    const saved = liveDraft;
-    applyRagSettings(settings, saved, ragBlockKey);
-    const secretSettings = buildSecretSettingsView();
-
-    const newEmbeddingKey = String(pendingEmbeddingKey || '').trim();
-    if (newEmbeddingKey) {
-        const stored = await storeRagEmbeddingApiKey(secretSettings, newEmbeddingKey);
-        if (!stored) {
-            toastr.error('Failed to store embedding API key securely');
-            return;
-        }
-    }
-
-    const newRerankerKey = String(pendingRerankerKey || '').trim();
-    if (newRerankerKey) {
-        const stored = await storeRagRerankerApiKey(secretSettings, newRerankerKey);
-        if (!stored) {
-            toastr.error('Failed to store re-ranker API key securely');
-            return;
-        }
-    }
-
-    // Sync secretIds into per-provider configs after key storage (which may have updated them)
-    const ragBlock = settings[ragBlockKey];
-    if (ragBlock) {
-        const src = ragBlock.source || 'transformers';
-        if (!ragBlock.sourceConfigs) ragBlock.sourceConfigs = {};
-        if (!ragBlock.sourceConfigs[src]) ragBlock.sourceConfigs[src] = {};
-        ragBlock.sourceConfigs[src].embeddingSecretId = ragBlock.embeddingSecretId || null;
-        ragBlock.sourceConfigs[src].apiUrl = ragBlock.apiUrl || '';
-        ragBlock.sourceConfigs[src].model = ragBlock.model || '';
-
-        const prov = ragBlock.reranker?.provider || 'similharity';
-        if (!ragBlock.reranker.providerConfigs) ragBlock.reranker.providerConfigs = {};
-        if (!ragBlock.reranker.providerConfigs[prov]) ragBlock.reranker.providerConfigs[prov] = {};
-        ragBlock.reranker.providerConfigs[prov].secretId = ragBlock.reranker.secretId || null;
-        ragBlock.reranker.providerConfigs[prov].apiUrl = ragBlock.reranker.apiUrl || '';
-        ragBlock.reranker.providerConfigs[prov].model = ragBlock.reranker.model || '';
-    }
-
-    saveSettings(settings);
-    toastr.success(`RAG settings saved (${isSharder ? 'Sharder Mode' : 'Standard Mode'})`);
+    await showPromise;
 }
 
