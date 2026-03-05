@@ -259,19 +259,18 @@ function renderModalHtml(rag, isSharder) {
                         <div class="ss-block">
                             <label for="ss-rag-source">Embedding Source</label>
                             <select id="ss-rag-source" class="text_pole ss-rag-control">
-                                <option value="transformers" ${(rag.source || 'transformers') === 'transformers' ? 'selected' : ''}>transformers</option>
-                                <option value="openai" ${rag.source === 'openai' ? 'selected' : ''}>openai</option>
-                                <option value="ollama" ${rag.source === 'ollama' ? 'selected' : ''}>ollama</option>
-                                <option value="llamacpp" ${rag.source === 'llamacpp' ? 'selected' : ''}>llamacpp</option>
-                                <option value="vllm" ${rag.source === 'vllm' ? 'selected' : ''}>vllm</option>
-                                <option value="koboldcpp" ${rag.source === 'koboldcpp' ? 'selected' : ''}>koboldcpp</option>
-                                <option value="bananabread" ${rag.source === 'bananabread' ? 'selected' : ''}>bananabread</option>
-                                <option value="extras" ${rag.source === 'extras' ? 'selected' : ''}>extras</option>
+                                <option value="transformers" ${(rag.source || 'transformers') === 'transformers' ? 'selected' : ''}>Transformers (local)</option>
+                                <option value="openai" ${rag.source === 'openai' ? 'selected' : ''}>OpenAI</option>
+                                <option value="ollama" ${rag.source === 'ollama' ? 'selected' : ''}>Ollama</option>
+                                <option value="llamacpp" ${rag.source === 'llamacpp' ? 'selected' : ''}>llama.cpp</option>
+                                <option value="vllm" ${rag.source === 'vllm' ? 'selected' : ''}>vLLM</option>
+                                <option value="koboldcpp" ${rag.source === 'koboldcpp' ? 'selected' : ''}>KoboldCpp</option>
+                                <option value="bananabread" ${rag.source === 'bananabread' ? 'selected' : ''}>Bananabread</option>
+                                <option value="extras" ${rag.source === 'extras' ? 'selected' : ''}>Extras API</option>
+                                <option value="openrouter" ${rag.source === 'openrouter' ? 'selected' : ''}>OpenRouter</option>
+                                <option value="linkapi" ${rag.source === 'linkapi' ? 'selected' : ''}>LinkAPI</option>
+                                <option value="custom" ${rag.source === 'custom' ? 'selected' : ''}>Custom OpenAI-Compatible (Direct)</option>
                             </select>
-                        </div>
-                        <div class="ss-block">
-                            <label for="ss-rag-embedding-mode">Embedding Transport</label>
-                            <div id="ss-rag-embedding-mode-host"></div>
                         </div>
                         <div class="ss-block">
                             <label id="ss-rag-api-url-label" for="ss-rag-api-url">Embedding API URL (optional override)</label>
@@ -279,7 +278,7 @@ function renderModalHtml(rag, isSharder) {
                             <p id="ss-rag-api-url-hint" class="ss-rag-inline-hint ss-text-hint">Overrides the default URL for this source. Useful for OpenAI-compatible proxies or custom endpoints.</p>
                         </div>
                         <div class="ss-block">
-                            <label for="ss-rag-model">Embedding Model (optional) ${infoHintHtml('ss-rag-embedding-model-hint', 'These values are sent to Similharity for embedding requests and should match your vectors extension provider setup.')}</label>
+                            <label for="ss-rag-model">Embedding Model (optional) ${infoHintHtml('ss-rag-embedding-model-hint', 'Model name sent to the embedding provider. For Custom source, this is required.')}</label>
                             <input id="ss-rag-model" class="text_pole ss-rag-control" type="text" value="${rag.model || ''}" placeholder="text-embedding-3-large" />
                         </div>
                         <div class="ss-block">
@@ -343,8 +342,13 @@ function renderModalHtml(rag, isSharder) {
                         </div>
                         <div id="ss-rag-reranker-config" class="${rag.reranker?.enabled ? '' : 'ss-hidden'}">
                             <div class="ss-block">
-                                <label for="ss-rag-reranker-mode">Re-ranker Transport</label>
-                                <div id="ss-rag-reranker-mode-host"></div>
+                                <label for="ss-rag-reranker-provider">Re-ranker Provider</label>
+                                <select id="ss-rag-reranker-provider" class="text_pole ss-rag-control">
+                                    <option value="similharity" ${(rag.reranker?.provider || 'similharity') === 'similharity' ? 'selected' : ''}>Similharity Proxy</option>
+                                    <option value="openrouter" ${rag.reranker?.provider === 'openrouter' ? 'selected' : ''}>OpenRouter (Direct)</option>
+                                    <option value="linkapi" ${rag.reranker?.provider === 'linkapi' ? 'selected' : ''}>LinkAPI (Direct)</option>
+                                    <option value="custom" ${rag.reranker?.provider === 'custom' ? 'selected' : ''}>Custom Endpoint (Direct)</option>
+                                </select>
                             </div>
                             <div class="ss-block">
                                 <label id="ss-rag-reranker-url-label" for="ss-rag-reranker-url">Re-ranker API URL</label>
@@ -650,48 +654,154 @@ function updateExpansionUi() {
     sceneWrap?.classList.toggle('ss-hidden', !sceneEnabled);
 }
 
+/** Default URLs and models for each embedding source (static, allocated once). */
+const EMBEDDING_SOURCE_DEFAULTS = {
+    transformers: { url: 'http://localhost:5000', model: 'sentence-transformers/all-MiniLM-L6-v2' },
+    openai: { url: 'https://api.openai.com/v1', model: 'text-embedding-3-small' },
+    ollama: { url: 'http://localhost:11434', model: 'nomic-embed-text' },
+    llamacpp: { url: 'http://localhost:8000', model: 'default' },
+    vllm: { url: 'http://localhost:8000', model: 'default' },
+    koboldcpp: { url: 'http://localhost:5001', model: 'default' },
+    bananabread: { url: 'http://localhost:8008', model: 'default' },
+    extras: { url: 'http://localhost:5100', model: 'default' },
+    openrouter: { url: 'https://openrouter.ai/api/v1', model: 'openai/text-embedding-3-small' },
+    linkapi: { url: 'https://api.linkapi.ai/v1', model: 'qwen3-embedding-8b' },
+    custom: { url: '', model: '' },
+};
+
+/** Default URLs and models for each re-ranker provider (static, allocated once). */
+const RERANKER_PROVIDER_DEFAULTS = {
+    similharity: { url: 'http://localhost:8000/rerank', model: 'bge-reranker-v2-m3' },
+    openrouter: { url: 'https://openrouter.ai/api/v1', model: 'openai/text-embedding-3-small' },
+    linkapi: { url: 'https://api.linkapi.ai/v1', model: 'qwen3-reranker-8b' },
+    custom: { url: '', model: '' },
+};
+
+/** Whether the given re-ranker provider uses direct mode (calls API from browser). */
+function isDirectRerankerProvider(provider) {
+    return provider === 'custom' || provider === 'openrouter' || provider === 'linkapi';
+}
+
+/** Sources that are always direct (call API from browser, never via Similharity plugin). */
+const ALWAYS_DIRECT_EMBEDDING_SOURCES = new Set(['custom', 'linkapi']);
+
+/**
+ * OpenAI-compatible sources where user overrides (apiUrl/apiKey) trigger direct mode.
+ * The Similharity plugin ignores overrides for these, so direct is the only way they take effect.
+ */
+const OPENAI_COMPATIBLE_EMBEDDING_SOURCES = new Set(['openai', 'openrouter', 'togetherai', 'mistral', 'electronhub']);
+
+/**
+ * Sources where the Similharity plugin reads apiUrl from req.body (proxy overrides work).
+ */
+const PROXY_OVERRIDE_SOURCES = new Set(['ollama', 'llamacpp', 'vllm', 'koboldcpp', 'bananabread', 'extras']);
+
+/**
+ * Sources where the plugin uses its own internal config — user cannot override URL/key/model.
+ */
+const PLUGIN_ONLY_SOURCES = new Set(['transformers']);
+
 function updateEmbeddingModeUi() {
-    const mode = document.getElementById('ss-rag-embedding-mode')?.value || 'similharity';
+    const source = document.getElementById('ss-rag-source')?.value || 'transformers';
+    const isCustom = ALWAYS_DIRECT_EMBEDDING_SOURCES.has(source);
+    const isOpenAICompat = OPENAI_COMPATIBLE_EMBEDDING_SOURCES.has(source);
+    const isPluginOnly = PLUGIN_ONLY_SOURCES.has(source);
     const urlLabel = document.getElementById('ss-rag-api-url-label');
     const urlHint = document.getElementById('ss-rag-api-url-hint');
     const urlInput = document.getElementById('ss-rag-api-url');
+    const modelInput = document.getElementById('ss-rag-model');
+    const embeddingKeyBlock = document.getElementById('ss-rag-embedding-key')?.closest('.ss-block');
+
+    const defaults = EMBEDDING_SOURCE_DEFAULTS[source] || { url: '', model: '' };
+
+    // Disable fields for transformers (plugin handles everything internally)
+    if (urlInput) urlInput.disabled = isPluginOnly;
+    if (modelInput) modelInput.disabled = isPluginOnly;
+    if (embeddingKeyBlock) embeddingKeyBlock.style.opacity = isPluginOnly ? '0.5' : '';
+
     if (urlLabel) {
-        urlLabel.textContent = mode === 'direct'
-            ? 'Embedding Endpoint URL (required)'
-            : 'Embedding API URL (optional override)';
+        if (isPluginOnly) {
+            urlLabel.textContent = 'Embedding API URL (managed by Similharity plugin)';
+        } else if (isCustom) {
+            urlLabel.textContent = 'Embedding Endpoint URL (required)';
+        } else if (isOpenAICompat) {
+            urlLabel.textContent = 'Embedding API URL (enables direct mode when set)';
+        } else {
+            urlLabel.textContent = 'Embedding API URL (optional override)';
+        }
     }
     if (urlInput) {
-        urlInput.placeholder = mode === 'direct'
-            ? 'https://api.example.com/v1 — /embeddings is appended automatically'
-            : 'Leave blank to use default; e.g. http://localhost:11434';
+        if (isPluginOnly) {
+            urlInput.placeholder = 'Not configurable — plugin uses built-in transformers';
+        } else if (isCustom) {
+            // Show actual default for known sources (linkapi), generic pattern for truly custom
+            urlInput.placeholder = source === 'linkapi'
+                ? 'https://api.linkapi.ai/v1'
+                : 'https://api.example.com/v1 — /embeddings is appended automatically';
+        } else {
+            urlInput.placeholder = `${defaults.url}`;
+        }
+    }
+    if (modelInput) {
+        if (isPluginOnly) {
+            modelInput.placeholder = 'Not configurable — plugin uses built-in model';
+        } else if (isCustom) {
+            modelInput.placeholder = 'Required for custom endpoint';
+        } else {
+            modelInput.placeholder = `${defaults.model}`;
+        }
     }
     if (urlHint) {
-        urlHint.textContent = mode === 'direct'
-            ? 'Direct mode calls this URL from the browser. Provide your base URL (e.g. https://api.example.com/v1) — /embeddings is appended automatically.'
-            : 'Overrides the default URL for this source. Useful for OpenAI-compatible proxies or custom endpoints.';
+        if (isPluginOnly) {
+            urlHint.textContent = 'Transformers runs locally via the Similharity plugin. URL, model, and API key settings have no effect.';
+        } else if (isCustom) {
+            urlHint.textContent = 'Direct mode calls this URL from the browser. Provide your base URL (e.g. https://api.example.com/v1) — /embeddings is appended automatically.';
+        } else if (isOpenAICompat) {
+            urlHint.textContent = 'Setting a URL or API key enables direct mode (calls the API from the browser instead of proxying through the Similharity plugin). Leave blank to use ST\'s global config via the plugin.';
+        } else {
+            urlHint.textContent = 'Overrides the default URL for this source. The Similharity plugin forwards this URL to the backend.';
+        }
     }
 }
 
 function updateRerankerUi() {
     const enabled = !!document.getElementById('ss-rag-reranker-enabled')?.checked;
-    const mode = document.getElementById('ss-rag-reranker-mode')?.value || 'similharity';
+    const provider = document.getElementById('ss-rag-reranker-provider')?.value || 'similharity';
+    const isDirect = isDirectRerankerProvider(provider);
     const wrap = document.getElementById('ss-rag-reranker-config');
     const urlLabel = document.getElementById('ss-rag-reranker-url-label');
     const urlHint = document.getElementById('ss-rag-reranker-url-hint');
+    const urlInput = document.getElementById('ss-rag-reranker-url');
+    const modelInput = document.getElementById('ss-rag-reranker-model');
+
     wrap?.classList.toggle('ss-hidden', !enabled);
     updateHybridUi();
+
+    const defaults = RERANKER_PROVIDER_DEFAULTS[provider] || { url: '', model: '' };
+
     if (urlLabel) {
-        urlLabel.textContent = mode === 'direct' ? 'Re-ranker Endpoint URL (required)' : 'Re-ranker API URL';
+        urlLabel.textContent = isDirect ? 'Re-ranker Endpoint URL (Optional override)' : 'Re-ranker API URL';
     }
-    const urlInput = document.getElementById('ss-rag-reranker-url');
     if (urlInput) {
-        urlInput.placeholder = mode === 'direct'
-            ? 'https://api.example.com/v1 — /rerank is appended automatically'
-            : 'http://localhost:8080/rerank';
+        // Show actual defaults for known direct providers
+        if (provider === 'linkapi') {
+            urlInput.placeholder = 'https://api.linkapi.ai/v1';
+        } else if (provider === 'openrouter') {
+            urlInput.placeholder = 'https://openrouter.ai/api/v1';
+        } else if (isDirect) {
+            urlInput.placeholder = 'https://api.example.com/v1 — /rerank is appended automatically';
+        } else {
+            urlInput.placeholder = `Default: ${defaults.url}`;
+        }
+    }
+    if (modelInput) {
+        modelInput.placeholder = isDirect
+            ? 'Required for direct endpoint'
+            : `Default: ${defaults.model}`;
     }
     if (urlHint) {
-        urlHint.textContent = mode === 'direct'
-            ? 'Direct mode calls this URL from the browser. Provide your base URL (e.g. https://api.example.com/v1) — /rerank is appended automatically.'
+        urlHint.textContent = isDirect
+            ? 'Direct mode calls this URL from the browser. /rerank is appended automatically.'
             : 'Upstream reranker URL passed to Similharity.';
     }
 }
@@ -769,7 +879,6 @@ function readRagDraft(base, isSharder) {
     draft.enabled = !!document.getElementById('ss-rag-enabled')?.checked;
     draft.backend = document.getElementById('ss-rag-backend')?.value || 'vectra';
     draft.source = document.getElementById('ss-rag-source')?.value?.trim() || 'transformers';
-    draft.embeddingMode = document.getElementById('ss-rag-embedding-mode')?.value || 'similharity';
     draft.apiUrl = document.getElementById('ss-rag-api-url')?.value?.trim() || '';
     draft.model = document.getElementById('ss-rag-model')?.value?.trim() || '';
 
@@ -784,10 +893,30 @@ function readRagDraft(base, isSharder) {
 
     draft.reranker = {
         enabled: !!document.getElementById('ss-rag-reranker-enabled')?.checked,
-        mode: document.getElementById('ss-rag-reranker-mode')?.value || 'similharity',
+        provider: document.getElementById('ss-rag-reranker-provider')?.value || 'similharity',
         apiUrl: document.getElementById('ss-rag-reranker-url')?.value?.trim() || '',
         model: document.getElementById('ss-rag-reranker-model')?.value?.trim() || '',
         secretId: base.reranker?.secretId || null,
+        providerConfigs: base.reranker?.providerConfigs && typeof base.reranker.providerConfigs === 'object'
+            ? { ...base.reranker.providerConfigs }
+            : {},
+    };
+
+    // Sync current flat embedding values into sourceConfigs for the active source
+    if (!draft.sourceConfigs || typeof draft.sourceConfigs !== 'object') {
+        draft.sourceConfigs = {};
+    }
+    draft.sourceConfigs[draft.source] = {
+        apiUrl: draft.apiUrl,
+        model: draft.model,
+        embeddingSecretId: draft.embeddingSecretId,
+    };
+
+    // Sync current flat reranker values into providerConfigs for the active provider
+    draft.reranker.providerConfigs[draft.reranker.provider] = {
+        apiUrl: draft.reranker.apiUrl,
+        model: draft.reranker.model,
+        secretId: draft.reranker.secretId,
     };
 
     draft.autoVectorizeNewSummaries = !!document.getElementById('ss-rag-auto-vectorize-new')?.checked;
@@ -861,7 +990,6 @@ function updateDomFromDraft(draft, isSharder) {
     setChecked('ss-rag-enabled', draft.enabled);
     setValue('ss-rag-backend', draft.backend || 'vectra');
     setValue('ss-rag-source', draft.source || 'transformers');
-    setValue('ss-rag-embedding-mode', draft.embeddingMode || 'similharity');
     setValue('ss-rag-api-url', draft.apiUrl || '');
     setValue('ss-rag-model', draft.model || '');
 
@@ -905,7 +1033,7 @@ function updateDomFromDraft(draft, isSharder) {
     setValue('ss-rag-var-name', draft.injectionVariableName || 'ss_rag_memory');
 
     setChecked('ss-rag-reranker-enabled', draft.reranker?.enabled);
-    setValue('ss-rag-reranker-mode', draft.reranker?.mode || 'similharity');
+    setValue('ss-rag-reranker-provider', draft.reranker?.provider || 'similharity');
     setValue('ss-rag-reranker-url', draft.reranker?.apiUrl || '');
     setValue('ss-rag-reranker-model', draft.reranker?.model || '');
 }
@@ -920,6 +1048,10 @@ function applyRagSettings(settings, saved, ragBlockKey) {
     settings[ragBlockKey] = {
         ...target,
         ...saved,
+        sourceConfigs: {
+            ...(target.sourceConfigs || {}),
+            ...(saved.sourceConfigs || {}),
+        },
         backendConfig: {
             ...(target.backendConfig || {}),
             ...(saved.backendConfig || {}),
@@ -927,6 +1059,10 @@ function applyRagSettings(settings, saved, ragBlockKey) {
         reranker: {
             ...(target.reranker || {}),
             ...(saved.reranker || {}),
+            providerConfigs: {
+                ...(target.reranker?.providerConfigs || {}),
+                ...(saved.reranker?.providerConfigs || {}),
+            },
         },
         vectorizationLorebookNames: Array.isArray(saved.vectorizationLorebookNames)
             ? [...saved.vectorizationLorebookNames]
@@ -991,7 +1127,14 @@ async function runStatusChecks(ragDraft) {
             const errorText = !embeddingHealth.success && embeddingHealth.error
                 ? `: ${summarize(embeddingHealth.error)}`
                 : '';
-            embedEl.textContent = `${sourceText} - ${healthText}${dimsText}${errorText}; model ${modelText}; api ${apiText}`;
+            const alwaysDirect = ALWAYS_DIRECT_EMBEDDING_SOURCES.has(ragSource);
+            const openaiCompat = OPENAI_COMPATIBLE_EMBEDDING_SOURCES.has(ragSource);
+            const hasOverrides = !!(ragApiUrl || ragDraft?.embeddingSecretId);
+            const isDirectTest = alwaysDirect || (openaiCompat && hasOverrides);
+            const proxyNote = (!isDirectTest && embeddingHealth.success)
+                ? ' (via Similharity plugin)'
+                : '';
+            embedEl.textContent = `${sourceText} - ${healthText}${dimsText}${errorText}${proxyNote}; model ${modelText}; api ${apiText}`;
         }
 
         if (backendEl) {
@@ -1046,10 +1189,12 @@ function buildRagDraftFromSource(src, isSharder) {
         enabled: source.enabled ?? false,
         backend: source.backend || 'vectra',
         source: source.source || 'transformers',
-        embeddingMode: source.embeddingMode || 'similharity',
         apiUrl: source.apiUrl || '',
         model: source.model || '',
         embeddingSecretId: source.embeddingSecretId || null,
+        sourceConfigs: source.sourceConfigs && typeof source.sourceConfigs === 'object'
+            ? JSON.parse(JSON.stringify(source.sourceConfigs))
+            : {},
         backendConfig: {
             qdrantAddress: source.backendConfig?.qdrantAddress
                 || `${source.backendConfig?.qdrantHost || 'localhost'}:${source.backendConfig?.qdrantPort ?? 6333}`,
@@ -1084,10 +1229,13 @@ function buildRagDraftFromSource(src, isSharder) {
         injectionVariableName: source.injectionVariableName || 'ss_rag_memory',
         reranker: {
             enabled: source.reranker?.enabled ?? false,
-            mode: source.reranker?.mode || 'similharity',
+            provider: source.reranker?.provider || source.reranker?.mode || 'similharity',
             apiUrl: source.reranker?.apiUrl || '',
             model: source.reranker?.model || '',
             secretId: source.reranker?.secretId || null,
+            providerConfigs: source.reranker?.providerConfigs && typeof source.reranker.providerConfigs === 'object'
+                ? JSON.parse(JSON.stringify(source.reranker.providerConfigs))
+                : {},
         },
         // Sharder-only fields
         ...(isSharder ? {
@@ -1126,7 +1274,18 @@ export async function openRagSettingsModal(settings) {
     // Build the working draft from the active block
     const rag = buildRagDraftFromSource(src, isSharder);
 
-    const buildSecretSettingsView = () => ({ ...settings, rag: settings[ragBlockKey] });
+    const buildSecretSettingsView = () => {
+        // Sync liveDraft secretIds onto the real settings object so writes
+        // from storeRagEmbeddingApiKey/storeRagRerankerApiKey propagate back.
+        const ragBlock = settings[ragBlockKey];
+        if (ragBlock) {
+            ragBlock.embeddingSecretId = liveDraft.embeddingSecretId || null;
+            if (ragBlock.reranker) {
+                ragBlock.reranker.secretId = liveDraft.reranker?.secretId || null;
+            }
+        }
+        return { ...settings, rag: ragBlock };
+    };
 
     let collectionId = null;
     try {
@@ -1151,7 +1310,14 @@ export async function openRagSettingsModal(settings) {
     let liveDraft = {
         ...rag,
         vectorizationLorebookNames: [...(rag.vectorizationLorebookNames || [])],
+        sourceConfigs: rag.sourceConfigs ? JSON.parse(JSON.stringify(rag.sourceConfigs)) : {},
         backendConfig: { ...(rag.backendConfig || {}) },
+        reranker: {
+            ...(rag.reranker || {}),
+            providerConfigs: rag.reranker?.providerConfigs
+                ? JSON.parse(JSON.stringify(rag.reranker.providerConfigs))
+                : {},
+        },
     };
     let pendingEmbeddingKey = '';
     let pendingRerankerKey = '';
@@ -1205,10 +1371,13 @@ export async function openRagSettingsModal(settings) {
             const defaultDraft = buildRagDraftFromSource(defaultSource, isSharder);
             const preservedReranker = {
                 enabled: liveDraft.reranker?.enabled ?? false,
-                mode: liveDraft.reranker?.mode || 'similharity',
+                provider: liveDraft.reranker?.provider || 'similharity',
                 apiUrl: liveDraft.reranker?.apiUrl || '',
                 model: liveDraft.reranker?.model || '',
                 secretId: liveDraft.reranker?.secretId || null,
+                providerConfigs: liveDraft.reranker?.providerConfigs
+                    ? { ...liveDraft.reranker.providerConfigs }
+                    : {},
             };
 
             const resetDraft = {
@@ -1216,9 +1385,11 @@ export async function openRagSettingsModal(settings) {
                 backend: liveDraft.backend,
                 backendConfig: { ...(liveDraft.backendConfig || {}) },
                 source: liveDraft.source,
+                sourceConfigs: liveDraft.sourceConfigs
+                    ? { ...liveDraft.sourceConfigs }
+                    : {},
                 apiUrl: liveDraft.apiUrl,
                 model: liveDraft.model,
-                embeddingMode: liveDraft.embeddingMode,
                 embeddingSecretId: liveDraft.embeddingSecretId || null,
                 reranker: {
                     ...(defaultDraft.reranker || {}),
@@ -1232,7 +1403,11 @@ export async function openRagSettingsModal(settings) {
                     ? [...resetDraft.vectorizationLorebookNames]
                     : [],
                 backendConfig: { ...(resetDraft.backendConfig || {}) },
-                reranker: { ...(resetDraft.reranker || {}) },
+                sourceConfigs: { ...(resetDraft.sourceConfigs || {}) },
+                reranker: {
+                    ...(resetDraft.reranker || {}),
+                    providerConfigs: { ...(resetDraft.reranker?.providerConfigs || {}) },
+                },
             };
 
             updateDomFromDraft(liveDraft, isSharder);
@@ -1318,26 +1493,6 @@ export async function openRagSettingsModal(settings) {
         mountHybridWeightSlider('ss-rag-hybrid-weight-host', 'ss-rag-hybrid-weight', normalizedWeights.beta);
 
         mountSegmentedToggle(
-            'ss-rag-embedding-mode-host',
-            'ss-rag-embedding-mode',
-            [
-                { value: 'similharity', label: 'Similharity Proxy' },
-                { value: 'direct', label: 'Direct Endpoint' },
-            ],
-            rag.embeddingMode || 'similharity',
-        );
-
-        mountSegmentedToggle(
-            'ss-rag-reranker-mode-host',
-            'ss-rag-reranker-mode',
-            [
-                { value: 'similharity', label: 'Similharity Proxy' },
-                { value: 'direct', label: 'Direct Endpoint' },
-            ],
-            rag.reranker?.mode || 'similharity',
-        );
-
-        mountSegmentedToggle(
             'ss-rag-chunking-mode-host',
             'ss-rag-chunking-mode',
             [
@@ -1367,17 +1522,84 @@ export async function openRagSettingsModal(settings) {
             rag.hybridFusionMethod || 'rrf',
         );
 
+        const embeddingKeyInput = document.getElementById('ss-rag-embedding-key');
+        const rerankerKeyInput = document.getElementById('ss-rag-reranker-key');
+
+        // Track the active source/provider independently so swap logic works
+        // even after syncDraftFromDom has already updated liveDraft.
+        let activeEmbeddingSource = liveDraft.source || 'transformers';
+        let activeRerankerProvider = liveDraft.reranker?.provider || 'similharity';
+
+        // Per-provider config swap: saves old provider's fields, loads new provider's fields.
+        // Uses `input` event (fires before `change` on <select>) and is registered before
+        // the .ss-rag-control handlers so the DOM is swapped before syncDraftFromDom reads it.
+        const sourceSelect = document.getElementById('ss-rag-source');
+        const providerSelect = document.getElementById('ss-rag-reranker-provider');
+
+        sourceSelect?.addEventListener('input', () => {
+            const newSource = sourceSelect.value || 'transformers';
+            if (activeEmbeddingSource === newSource) return;
+
+            // Save current DOM values for the old source
+            if (!liveDraft.sourceConfigs) liveDraft.sourceConfigs = {};
+            liveDraft.sourceConfigs[activeEmbeddingSource] = {
+                apiUrl: document.getElementById('ss-rag-api-url')?.value?.trim() || '',
+                model: document.getElementById('ss-rag-model')?.value?.trim() || '',
+                embeddingSecretId: liveDraft.embeddingSecretId || null,
+            };
+
+            // Load the new source's config (or blank)
+            const newConfig = liveDraft.sourceConfigs[newSource] || {};
+            const urlInput = document.getElementById('ss-rag-api-url');
+            const modelInput = document.getElementById('ss-rag-model');
+            if (urlInput) urlInput.value = newConfig.apiUrl || '';
+            if (modelInput) modelInput.value = newConfig.model || '';
+            liveDraft.embeddingSecretId = newConfig.embeddingSecretId || null;
+
+            // Clear pending key (was for old source)
+            pendingEmbeddingKey = '';
+            if (embeddingKeyInput) embeddingKeyInput.value = '';
+
+            activeEmbeddingSource = newSource;
+        });
+
+        providerSelect?.addEventListener('input', () => {
+            const newProvider = providerSelect.value || 'similharity';
+            if (activeRerankerProvider === newProvider) return;
+
+            // Save current DOM values for the old provider
+            if (!liveDraft.reranker) liveDraft.reranker = {};
+            if (!liveDraft.reranker.providerConfigs) liveDraft.reranker.providerConfigs = {};
+            liveDraft.reranker.providerConfigs[activeRerankerProvider] = {
+                apiUrl: document.getElementById('ss-rag-reranker-url')?.value?.trim() || '',
+                model: document.getElementById('ss-rag-reranker-model')?.value?.trim() || '',
+                secretId: liveDraft.reranker.secretId || null,
+            };
+
+            // Load the new provider's config (or blank)
+            const newConfig = liveDraft.reranker.providerConfigs[newProvider] || {};
+            const urlInput = document.getElementById('ss-rag-reranker-url');
+            const modelInput = document.getElementById('ss-rag-reranker-model');
+            if (urlInput) urlInput.value = newConfig.apiUrl || '';
+            if (modelInput) modelInput.value = newConfig.model || '';
+            liveDraft.reranker.secretId = newConfig.secretId || null;
+
+            // Clear pending key (was for old provider)
+            pendingRerankerKey = '';
+            if (rerankerKeyInput) rerankerKeyInput.value = '';
+
+            activeRerankerProvider = newProvider;
+        });
+
         for (const control of document.querySelectorAll('.ss-rag-control')) {
             control.addEventListener('input', syncDraftFromDom);
             control.addEventListener('change', syncDraftFromDom);
         }
 
-        const embeddingKeyInput = document.getElementById('ss-rag-embedding-key');
         embeddingKeyInput?.addEventListener('input', () => {
             pendingEmbeddingKey = embeddingKeyInput.value || '';
         });
 
-        const rerankerKeyInput = document.getElementById('ss-rag-reranker-key');
         rerankerKeyInput?.addEventListener('input', () => {
             pendingRerankerKey = rerankerKeyInput.value || '';
         });
@@ -1441,9 +1663,8 @@ export async function openRagSettingsModal(settings) {
             'ss-rag-source',
             'ss-rag-model',
             'ss-rag-api-url',
-            'ss-rag-embedding-mode',
             'ss-rag-reranker-enabled',
-            'ss-rag-reranker-mode',
+            'ss-rag-reranker-provider',
             'ss-rag-reranker-url',
             'ss-rag-reranker-model',
         ]) {
@@ -1470,14 +1691,16 @@ export async function openRagSettingsModal(settings) {
             });
         }
 
-        document.getElementById('ss-rag-embedding-mode')?.addEventListener('change', () => {
+        document.getElementById('ss-rag-source')?.addEventListener('change', () => {
             updateEmbeddingModeUi();
+            refreshEmbeddingKeyStatus();
         });
         document.getElementById('ss-rag-reranker-enabled')?.addEventListener('change', () => {
             updateRerankerUi();
         });
-        document.getElementById('ss-rag-reranker-mode')?.addEventListener('change', () => {
+        document.getElementById('ss-rag-reranker-provider')?.addEventListener('change', () => {
             updateRerankerUi();
+            refreshRerankerKeyStatus();
         });
         document.getElementById('ss-rag-use-lorebooks-vectorization')?.addEventListener('change', () => {
             updateVectorizationLorebookUi();
@@ -1754,6 +1977,24 @@ export async function openRagSettingsModal(settings) {
             toastr.error('Failed to store re-ranker API key securely');
             return;
         }
+    }
+
+    // Sync secretIds into per-provider configs after key storage (which may have updated them)
+    const ragBlock = settings[ragBlockKey];
+    if (ragBlock) {
+        const src = ragBlock.source || 'transformers';
+        if (!ragBlock.sourceConfigs) ragBlock.sourceConfigs = {};
+        if (!ragBlock.sourceConfigs[src]) ragBlock.sourceConfigs[src] = {};
+        ragBlock.sourceConfigs[src].embeddingSecretId = ragBlock.embeddingSecretId || null;
+        ragBlock.sourceConfigs[src].apiUrl = ragBlock.apiUrl || '';
+        ragBlock.sourceConfigs[src].model = ragBlock.model || '';
+
+        const prov = ragBlock.reranker?.provider || 'similharity';
+        if (!ragBlock.reranker.providerConfigs) ragBlock.reranker.providerConfigs = {};
+        if (!ragBlock.reranker.providerConfigs[prov]) ragBlock.reranker.providerConfigs[prov] = {};
+        ragBlock.reranker.providerConfigs[prov].secretId = ragBlock.reranker.secretId || null;
+        ragBlock.reranker.providerConfigs[prov].apiUrl = ragBlock.reranker.apiUrl || '';
+        ragBlock.reranker.providerConfigs[prov].model = ragBlock.reranker.model || '';
     }
 
     saveSettings(settings);

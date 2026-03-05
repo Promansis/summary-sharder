@@ -91,6 +91,7 @@ function resolveProfileSecretKey(selectedApiMap) {
             case chat_completion_sources.OPENAI: return SECRET_KEYS.OPENAI;
             case chat_completion_sources.CLAUDE: return SECRET_KEYS.CLAUDE;
             case chat_completion_sources.OPENROUTER: return SECRET_KEYS.OPENROUTER;
+            case chat_completion_sources.LINKAPI: return SECRET_KEYS.LINKAPI;
             case chat_completion_sources.AI21: return SECRET_KEYS.AI21;
             case chat_completion_sources.MAKERSUITE: return SECRET_KEYS.MAKERSUITE;
             case chat_completion_sources.VERTEXAI: return SECRET_KEYS.VERTEXAI;
@@ -130,6 +131,7 @@ function resolveProfileSecretKey(selectedApiMap) {
             case textgen_types.INFERMATICAI: return SECRET_KEYS.INFERMATICAI;
             case textgen_types.DREAMGEN: return SECRET_KEYS.DREAMGEN;
             case textgen_types.OPENROUTER: return SECRET_KEYS.OPENROUTER;
+            case textgen_types.LINKAPI: return SECRET_KEYS.LINKAPI;
             case textgen_types.FEATHERLESS: return SECRET_KEYS.FEATHERLESS;
             case textgen_types.HUGGINGFACE: return SECRET_KEYS.HUGGINGFACE;
             case textgen_types.GENERIC: return SECRET_KEYS.GENERIC;

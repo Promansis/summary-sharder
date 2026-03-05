@@ -105,12 +105,48 @@ export function classifyInsertError(error, ragSettings = null) {
 }
 
 /**
+ * Sources that are always direct (never proxy through Similharity).
+ */
+const ALWAYS_DIRECT_SOURCES = new Set(['custom', 'linkapi']);
+
+/**
+ * OpenAI-compatible sources that CAN go direct when the user provides
+ * their own apiUrl or apiKey (the Similharity plugin ignores overrides
+ * for these sources, so direct is the only way user config takes effect).
+ */
+const OPENAI_COMPATIBLE_SOURCES = new Set(['openai', 'openrouter', 'togetherai', 'mistral', 'electronhub']);
+
+/**
+ * Default base URLs for sources that support direct mode.
+ * Used as fallback when the user hasn't set a custom apiUrl.
+ */
+const DIRECT_SOURCE_DEFAULT_URLS = {
+    openai: 'https://api.openai.com/v1',
+    openrouter: 'https://openrouter.ai/api/v1',
+    linkapi: 'https://api.linkapi.ai/v1',
+    togetherai: 'https://api.together.xyz/v1',
+    mistral: 'https://api.mistral.ai/v1',
+    electronhub: 'https://api.electronhub.ai/v1',
+};
+
+/**
  * Check whether direct embedding mode is active.
+ * Direct mode is used when:
+ *  - source is 'custom' or 'linkapi' (always direct), OR
+ *  - source is an OpenAI-compatible provider AND the user has set an apiUrl or apiKey
+ *    (the plugin ignores overrides for these, so we must call the API directly).
  * @param {Object} ragSettings
  * @returns {boolean}
  */
 function isDirectEmbeddingMode(ragSettings) {
-    return String(ragSettings?.embeddingMode || '').toLowerCase() === 'direct';
+    const source = String(ragSettings?.source || '').toLowerCase();
+    if (ALWAYS_DIRECT_SOURCES.has(source)) return true;
+    if (OPENAI_COMPATIBLE_SOURCES.has(source)) {
+        const hasUrl = !!String(ragSettings?.apiUrl || '').trim();
+        const hasKey = !!ragSettings?.embeddingSecretId;
+        return hasUrl || hasKey;
+    }
+    return false;
 }
 
 /**
@@ -122,7 +158,10 @@ function isDirectEmbeddingMode(ragSettings) {
  * @returns {Promise<number[][]>} Array of embedding vectors
  */
 async function fetchDirectEmbedding(texts, ragSettings, apiKeyOverride = '') {
-    const apiUrl = String(ragSettings?.apiUrl || '').trim();
+    const source = String(ragSettings?.source || '').toLowerCase();
+    const apiUrl = String(ragSettings?.apiUrl || '').trim()
+        || DIRECT_SOURCE_DEFAULT_URLS[source]
+        || '';
     if (!apiUrl) throw new Error('Direct embedding: API URL is missing');
 
     const apiKey = apiKeyOverride || await resolveRagEmbeddingApiKey(ragSettings);
@@ -198,34 +237,38 @@ function toQdrantPointId(hash, fallbackIdentity = '') {
 }
 
 /**
+ * Map UI source names to plugin-compatible source names.
+ * LinkAPI is OpenAI-compatible, so we map it to 'openai' for the plugin.
+ * @param {string} source - Source from ragSettings
+ * @returns {string} Plugin-compatible source name
+ */
+function mapSourceForPlugin(source) {
+    const normalized = String(source || 'transformers').toLowerCase();
+    // Both 'custom' and 'linkapi' are OpenAI-compatible; map to 'openai' for the plugin
+    return (normalized === 'linkapi' || normalized === 'custom') ? 'openai' : normalized;
+}
+
+/**
  * @param {Object} ragSettings
  * @param {string} embeddingApiKey
  * @returns {Object}
  */
 function getProviderRequestParams(ragSettings, embeddingApiKey = '') {
     const source = String(ragSettings?.source || 'transformers');
-    const vectors = extension_settings?.vectors || {};
-    const provider = (vectors && typeof vectors[source] === 'object') ? vectors[source] : {};
-
-    const pick = (...keys) => {
-        for (const key of keys) {
-            if (provider?.[key] !== undefined && provider?.[key] !== null && provider?.[key] !== '') {
-                return provider[key];
-            }
-            if (vectors?.[key] !== undefined && vectors?.[key] !== null && vectors?.[key] !== '') {
-                return vectors[key];
-            }
-            if (ragSettings?.[key] !== undefined && ragSettings?.[key] !== null && ragSettings?.[key] !== '') {
-                return ragSettings[key];
-            }
-        }
-        return '';
-    };
-
     const params = {};
 
+    // All provider configuration comes from RAG settings only
+    // No fallback to vectors extension to keep RAG self-contained
+
+    if (source === 'transformers') {
+        const apiUrl = String(ragSettings?.apiUrl || '').trim();
+        if (apiUrl) {
+            params.apiUrl = apiUrl;
+        }
+    }
+
     if (source === 'bananabread') {
-        const apiUrl = pick('apiUrl', 'api_url', 'url', 'endpointUrl');
+        const apiUrl = String(ragSettings?.apiUrl || '').trim();
         if (apiUrl) {
             params.apiUrl = apiUrl;
         }
@@ -235,41 +278,32 @@ function getProviderRequestParams(ragSettings, embeddingApiKey = '') {
     }
 
     if (source === 'ollama') {
-        const apiUrl = pick('apiUrl', 'api_url', 'url', 'endpointUrl');
+        const apiUrl = String(ragSettings?.apiUrl || '').trim();
         if (apiUrl) {
             params.apiUrl = apiUrl;
-        }
-        const keep = pick('keep', 'ollama_keep');
-        if (keep !== '') {
-            params.keep = !!keep;
         }
     }
 
     if (source === 'llamacpp' || source === 'vllm' || source === 'koboldcpp') {
-        const apiUrl = pick('apiUrl', 'api_url', 'url', 'endpointUrl');
+        const apiUrl = String(ragSettings?.apiUrl || '').trim();
         if (apiUrl) {
             params.apiUrl = apiUrl;
         }
     }
 
-    if (source === 'openai' || source === 'togetherai' || source === 'mistral' || source === 'electronhub' || source === 'openrouter') {
-        const apiUrl = pick('apiUrl', 'api_url', 'url', 'endpointUrl');
+    if (source === 'openai' || source === 'togetherai' || source === 'mistral' || source === 'electronhub' || source === 'openrouter' || source === 'linkapi') {
+        const apiUrl = String(ragSettings?.apiUrl || '').trim();
         if (apiUrl) params.apiUrl = apiUrl;
         if (embeddingApiKey) params.apiKey = embeddingApiKey;
     }
 
     if (source === 'extras') {
-        const extrasUrl = pick('extrasUrl', 'extras_url', 'apiUrl', 'url');
-        if (extrasUrl) {
-            params.extrasUrl = extrasUrl;
+        const apiUrl = String(ragSettings?.apiUrl || '').trim();
+        if (apiUrl) {
+            params.extrasUrl = apiUrl;
         }
         if (embeddingApiKey) {
             params.extrasKey = embeddingApiKey;
-        } else {
-            const extrasKey = pick('extrasKey', 'extras_key');
-            if (extrasKey) {
-                params.extrasKey = extrasKey;
-            }
         }
     }
 
@@ -286,10 +320,11 @@ function getProviderRequestParams(ragSettings, embeddingApiKey = '') {
 async function buildRequestBody(collectionId, ragSettings, extra = {}) {
     const embeddingApiKey = await resolveRagEmbeddingApiKey(ragSettings);
     const providerParams = getProviderRequestParams(ragSettings, embeddingApiKey);
+
     return {
         backend: ragSettings.backend || 'vectra',
         collectionId,
-        source: ragSettings.source || 'transformers',
+        source: mapSourceForPlugin(ragSettings.source),
         model: ragSettings.model || '',
         ...(embeddingApiKey ? { embeddingApiKey } : {}),
         ...providerParams,
@@ -658,10 +693,11 @@ export async function testEmbeddingConnection(
     const overrideApiKey = String(options?.apiKeyOverride || '').trim();
     const embeddingApiKey = overrideApiKey || await resolveRagEmbeddingApiKey(ragSettings);
     const providerParams = getProviderRequestParams(ragSettings, embeddingApiKey);
+
     const data = await pluginFetch('/get-embedding', {
         method: 'POST',
         body: {
-            source: ragSettings.source || 'transformers',
+            source: mapSourceForPlugin(ragSettings.source),
             model: ragSettings.model || '',
             text,
             ...(embeddingApiKey ? { apiKey: embeddingApiKey } : {}),

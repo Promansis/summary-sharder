@@ -166,11 +166,11 @@ export function getDefaultSettings() {
             enabled: false,
             // Backend
             backend: 'vectra',              // 'vectra' | 'lancedb' | 'qdrant' | 'milvus'
-            source: 'transformers',         // Embedding source (from Similharity plugin)
-            embeddingMode: 'similharity',   // 'similharity' (proxy via plugin) | 'direct' (call external API directly)
-            apiUrl: '',                     // Custom embedding API URL override
-            model: '',                      // Embedding model (provider-specific)
-            embeddingSecretId: null,        // Secret ID for embedding API key in ST secrets store
+            source: 'transformers',         // Embedding source: 'transformers'|'openai'|'ollama'|'llamacpp'|'vllm'|'koboldcpp'|'bananabread'|'extras'|'openrouter'|'custom'
+            apiUrl: '',                     // Active embedding API URL (resolved from sourceConfigs[source])
+            model: '',                      // Active embedding model (resolved from sourceConfigs[source])
+            embeddingSecretId: null,        // Active secret ID (resolved from sourceConfigs[source])
+            sourceConfigs: {},              // Per-source { apiUrl, model, embeddingSecretId } keyed by source name
             backendConfig: {
                 qdrantAddress: 'localhost:6333',
                 qdrantUseCloud: false,
@@ -214,10 +214,11 @@ export function getDefaultSettings() {
             // Re-ranker
             reranker: {
                 enabled: false,
-                mode: 'similharity',
+                provider: 'similharity',    // 'similharity' (proxy via plugin) | 'openrouter' | 'custom' (direct call)
                 apiUrl: '',
                 model: '',
                 secretId: null,
+                providerConfigs: {},        // Per-provider { apiUrl, model, secretId } keyed by provider name
             },
         },
 
@@ -228,10 +229,10 @@ export function getDefaultSettings() {
             // Backend
             backend: 'vectra',
             source: 'transformers',
-            embeddingMode: 'similharity',
             apiUrl: '',
             model: '',
             embeddingSecretId: null,
+            sourceConfigs: {},
             backendConfig: {
                 qdrantAddress: 'localhost:6333',
                 qdrantUseCloud: false,
@@ -269,10 +270,11 @@ export function getDefaultSettings() {
             // Re-ranker
             reranker: {
                 enabled: false,
-                mode: 'similharity',
+                provider: 'similharity',    // 'similharity' (proxy via plugin) | 'openrouter' | 'custom' (direct call)
                 apiUrl: '',
                 model: '',
                 secretId: null,
+                providerConfigs: {},
             },
         },
     };
@@ -761,9 +763,74 @@ export function migrateSettings(settings) {
             }
         }
 
-        const validRerankerModes = new Set(['similharity', 'direct']);
-        if (!validRerankerModes.has(String(settings.rag.reranker.mode || '').trim().toLowerCase())) {
-            settings.rag.reranker.mode = 'similharity';
+        // Migrate embeddingMode → source before validation so 'direct' becomes 'custom'
+        if (settings.rag.embeddingMode === 'direct') {
+            settings.rag.source = 'custom';
+            delete settings.rag.embeddingMode;
+            log.debug('Migrated rag.embeddingMode=direct to rag.source=custom');
+            migrated = true;
+        } else if (settings.rag.embeddingMode !== undefined) {
+            delete settings.rag.embeddingMode;
+            migrated = true;
+        }
+
+        // Migrate reranker.mode → reranker.provider before validation
+        if (settings.rag.reranker?.mode === 'direct') {
+            settings.rag.reranker.provider = 'custom';
+            delete settings.rag.reranker.mode;
+            log.debug('Migrated rag.reranker.mode=direct to rag.reranker.provider=custom');
+            migrated = true;
+        } else if (settings.rag.reranker?.mode !== undefined) {
+            settings.rag.reranker.provider = settings.rag.reranker.mode === 'similharity' ? 'similharity' : 'custom';
+            delete settings.rag.reranker.mode;
+            migrated = true;
+        }
+
+        // Ensure sourceConfigs and providerConfigs exist
+        if (!settings.rag.sourceConfigs || typeof settings.rag.sourceConfigs !== 'object') {
+            settings.rag.sourceConfigs = {};
+            migrated = true;
+        }
+        if (!settings.rag.reranker.providerConfigs || typeof settings.rag.reranker.providerConfigs !== 'object') {
+            settings.rag.reranker.providerConfigs = {};
+            migrated = true;
+        }
+
+        // Seed current flat values into sourceConfigs/providerConfigs if not already present
+        const currentSource = settings.rag.source || 'transformers';
+        if (!settings.rag.sourceConfigs[currentSource]) {
+            const hasValues = (settings.rag.apiUrl || settings.rag.model || settings.rag.embeddingSecretId);
+            if (hasValues) {
+                settings.rag.sourceConfigs[currentSource] = {
+                    apiUrl: settings.rag.apiUrl || '',
+                    model: settings.rag.model || '',
+                    embeddingSecretId: settings.rag.embeddingSecretId || null,
+                };
+                migrated = true;
+            }
+        }
+        const currentProvider = settings.rag.reranker.provider || 'similharity';
+        if (!settings.rag.reranker.providerConfigs[currentProvider]) {
+            const hasValues = (settings.rag.reranker.apiUrl || settings.rag.reranker.model || settings.rag.reranker.secretId);
+            if (hasValues) {
+                settings.rag.reranker.providerConfigs[currentProvider] = {
+                    apiUrl: settings.rag.reranker.apiUrl || '',
+                    model: settings.rag.reranker.model || '',
+                    secretId: settings.rag.reranker.secretId || null,
+                };
+                migrated = true;
+            }
+        }
+
+        const validEmbeddingSources = new Set(['transformers', 'openai', 'ollama', 'llamacpp', 'vllm', 'koboldcpp', 'bananabread', 'extras', 'openrouter', 'linkapi', 'custom']);
+        if (!validEmbeddingSources.has(String(settings.rag.source || '').trim().toLowerCase())) {
+            settings.rag.source = 'transformers';
+            migrated = true;
+        }
+
+        const validRerankerProviders = new Set(['similharity', 'openrouter', 'linkapi', 'custom']);
+        if (!validRerankerProviders.has(String(settings.rag.reranker.provider || '').trim().toLowerCase())) {
+            settings.rag.reranker.provider = 'similharity';
             migrated = true;
         }
 
@@ -855,6 +922,28 @@ export function migrateSettings(settings) {
             settings.rag.useLorebooksForVectorization = normalizedUseLorebooksForVectorization;
             migrated = true;
         }
+    }
+
+    // Migrate ragStandard embeddingMode and reranker.mode (same logic as rag, handled outside the if block)
+    if (settings.ragStandard?.embeddingMode === 'direct') {
+        settings.ragStandard.source = 'custom';
+        delete settings.ragStandard.embeddingMode;
+        log.debug('Migrated ragStandard.embeddingMode=direct to ragStandard.source=custom');
+        migrated = true;
+    } else if (settings.ragStandard?.embeddingMode !== undefined) {
+        delete settings.ragStandard.embeddingMode;
+        migrated = true;
+    }
+
+    if (settings.ragStandard?.reranker?.mode === 'direct') {
+        settings.ragStandard.reranker.provider = 'custom';
+        delete settings.ragStandard.reranker.mode;
+        log.debug('Migrated ragStandard.reranker.mode=direct to ragStandard.reranker.provider=custom');
+        migrated = true;
+    } else if (settings.ragStandard?.reranker?.mode !== undefined) {
+        settings.ragStandard.reranker.provider = settings.ragStandard.reranker.mode === 'similharity' ? 'similharity' : 'custom';
+        delete settings.ragStandard.reranker.mode;
+        migrated = true;
     }
 
     if (migrated) {

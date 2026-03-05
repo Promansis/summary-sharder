@@ -83,9 +83,18 @@ function extractScores(payload, expectedLength) {
     return scores;
 }
 
+/** Direct-mode re-ranker providers that call the API from the browser. */
+const DIRECT_RERANKER_PROVIDERS = new Set(['custom', 'openrouter', 'linkapi']);
+
+/** Default base URLs for direct re-ranker providers (fallback when user hasn't set a custom URL). */
+const DIRECT_RERANKER_DEFAULT_URLS = {
+    openrouter: 'https://openrouter.ai/api/v1',
+    linkapi: 'https://api.linkapi.ai/v1',
+};
+
 function normalizeMode(ragSettings) {
-    const mode = String(ragSettings?.reranker?.mode || '').trim().toLowerCase();
-    return mode === 'direct' ? 'direct' : 'similharity';
+    const provider = String(ragSettings?.reranker?.provider || '').trim().toLowerCase();
+    return DIRECT_RERANKER_PROVIDERS.has(provider) ? 'direct' : 'similharity';
 }
 
 function buildPassthroughResult(documents, mode, target, error = '') {
@@ -117,7 +126,10 @@ export async function rerankDocuments(query, documents, ragSettings, options = {
         : [];
     const reranker = ragSettings?.reranker || {};
     const mode = normalizeMode(ragSettings);
-    const apiUrl = String(reranker.apiUrl || '').trim();
+    const provider = String(reranker.provider || '').trim().toLowerCase();
+    const apiUrl = String(reranker.apiUrl || '').trim()
+        || DIRECT_RERANKER_DEFAULT_URLS[provider]
+        || '';
     const target = mode === 'similharity' ? PLUGIN_RERANK_URL : apiUrl;
 
     if (!reranker.enabled || !safeQuery || safeDocs.length === 0) {
@@ -235,7 +247,10 @@ export async function checkRerankerHealth(ragSettings) {
     const enabled = !!reranker.enabled;
     const mode = normalizeMode(ragSettings);
     const modeText = mode === 'direct' ? 'direct' : 'similharity';
-    const apiUrl = String(reranker.apiUrl || '').trim();
+    const provider = String(reranker.provider || '').trim().toLowerCase();
+    const apiUrl = String(reranker.apiUrl || '').trim()
+        || DIRECT_RERANKER_DEFAULT_URLS[provider]
+        || '';
     const model = String(reranker.model || '').trim() || 'default';
 
     if (!enabled) {
@@ -286,9 +301,11 @@ export async function testRerankerConnection(ragSettings, options = {}) {
     const reranker = ragSettings?.reranker || {};
     const mode = normalizeMode(ragSettings);
     const modeText = mode === 'direct' ? 'direct' : 'similharity';
-    const target = mode === 'direct'
-        ? String(reranker.apiUrl || '').trim()
-        : PLUGIN_RERANK_URL;
+    const provider = String(reranker.provider || '').trim().toLowerCase();
+    const resolvedUrl = String(reranker.apiUrl || '').trim()
+        || DIRECT_RERANKER_DEFAULT_URLS[provider]
+        || '';
+    const target = mode === 'direct' ? resolvedUrl : PLUGIN_RERANK_URL;
 
     if (!reranker.enabled) {
         return {
@@ -299,7 +316,7 @@ export async function testRerankerConnection(ragSettings, options = {}) {
         };
     }
 
-    if (!String(reranker.apiUrl || '').trim()) {
+    if (!resolvedUrl) {
         return {
             success: false,
             mode,
