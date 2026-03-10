@@ -1499,7 +1499,9 @@ async function handleImport(state, dom) {
     );
     if (confirmed !== POPUP_RESULT.AFFIRMATIVE) return;
 
-    const rag = getEffectiveRagSettings(state);
+    // Use current RAG settings directly for embedding (not the collection's stored model,
+    // which may be empty for a new collection and would cause "model name not specified" errors).
+    const rag = { ...(state.rag || {}) };
     toastr.info(`Importing ${chunks.length} chunk(s)...`);
 
     let inserted = 0;
@@ -1700,36 +1702,32 @@ async function handleRevectorizeCollection(state, dom) {
 
     const selectedBackend = String(state.selectedCollection.backend || '').trim().toLowerCase();
     const draftBackend = String(state.rag?.backend || 'vectra').trim().toLowerCase();
-    if (selectedBackend && draftBackend && selectedBackend !== draftBackend) {
-        toastr.warning(`Backend mismatch: selected collection uses ${selectedBackend}, but RAG settings use ${draftBackend}. Set the same backend in RAG settings first.`);
-        return;
-    }
+    const isMigration = selectedBackend && draftBackend && selectedBackend !== draftBackend;
 
-    const confirmed = await showSsConfirm(
-        'Revectorize Collection',
-        `Revectorize "${state.collectionId}" using current RAG settings?\nThis will delete and rebuild vectors for this collection and may take time.`,
-    );
+    const confirmMsg = isMigration
+        ? `Migrate "${state.collectionId}" from ${selectedBackend} to ${draftBackend}?\nExisting vectors will be deleted from ${selectedBackend} and re-embedded into ${draftBackend} using current RAG settings.`
+        : `Revectorize "${state.collectionId}" using current RAG settings?\nThis will delete and rebuild vectors for this collection and may take time.`;
+
+    const confirmed = await showSsConfirm('Revectorize Collection', confirmMsg);
     if (confirmed !== POPUP_RESULT.AFFIRMATIVE) {
         return;
     }
 
-    const ragSettings = {
-        ...(state.rag || {}),
-        backend: selectedBackend || draftBackend || 'vectra',
-    };
-
+    // Read/purge from the backend where the data currently lives.
     const readRagSettings = getEffectiveRagSettings(state);
     const chunks = await collectCollectionForRevectorize(state.collectionId, readRagSettings);
     toastr.info(`Revectorizing ${chunks.length} chunk(s)...`);
 
-    await purgeCollection(state.collectionId, ragSettings);
+    await purgeCollection(state.collectionId, readRagSettings);
 
+    // Re-insert using current RAG settings (possibly a new backend for migration).
+    const writeRagSettings = { ...(state.rag || {}) };
     let inserted = 0;
     for (let i = 0; i < chunks.length; i += REVECTORIZE_INSERT_BATCH_SIZE) {
         const batch = chunks.slice(i, i + REVECTORIZE_INSERT_BATCH_SIZE);
         if (batch.length === 0) continue;
 
-        const result = await insertChunks(state.collectionId, batch, ragSettings);
+        const result = await insertChunks(state.collectionId, batch, writeRagSettings);
         inserted += Number(result?.inserted ?? batch.length) || 0;
     }
 
