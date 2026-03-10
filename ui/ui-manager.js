@@ -21,6 +21,7 @@ import { openChatManagerModal } from './modals/management/chat-manager-modal.js'
 import { openBatchConfigModal } from './modals/summarization/batch-config-modal.js';
 import { showSsInput } from './common/modal-base.js';
 import { openApiConfigModal } from './modals/configuration/api-config-modal.js';
+import { openDebugExportModal } from './modals/configuration/debug-export-modal.js';
 import { updateApiStatusDisplays } from './common/api-status-state.js';
 import { log } from '../core/logger.js';
 import {
@@ -479,6 +480,32 @@ export function renderSettingsUI(settings, callbacks) {
                         </div>
                     </div>
 
+                    <div class="ss-review-accordion ss-settings-accordion" data-settings-section="debug">
+                        <div class="ss-accordion-header" role="button" tabindex="0" aria-expanded="false">
+                            <span class="ss-accordion-toggle"><i class="fa-solid fa-chevron-right"></i></span>
+                            <span class="ss-accordion-title">Debug</span>
+                        </div>
+                        <div class="ss-accordion-content ss-hidden">
+                            <div class="ss-block">
+                                <label class="checkbox_label">
+                                    <input id="ss-debug-logging" type="checkbox" />
+                                    <span>Enable Debug Logging</span>
+                                </label>
+                                <p class="ss-hint">Turns on developer-only <code>debug</code> console logs for Summary Sharder subsystems.</p>
+                            </div>
+
+                            <div class="ss-block">
+                                <input id="ss-export-debug-settings-btn" class="menu_button" type="button" value="Export Debug Settings..." />
+                                <p class="ss-hint">Exports a shareable Markdown table of current extension settings and active chat metadata. Secrets stay redacted.</p>
+                            </div>
+
+                            <div class="ss-block ss-debug-suggestions">
+                                <label>Useful Next Additions:</label>
+                                <p class="ss-hint"> Soon.</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="ss-action-bar">
                         <div class="ss-action-bar-primary">
                             <input id="ss-run-summarize" class="menu_button" type="button" value="Summarize Now" />
@@ -621,6 +648,11 @@ export function renderSettingsUI(settings, callbacks) {
     const fabEnabledEl = document.getElementById('ss-fab-enabled');
     if (fabEnabledEl) {
         fabEnabledEl.checked = settings.fab?.enabled !== false;
+    }
+
+    const debugLoggingEl = document.getElementById('ss-debug-logging');
+    if (debugLoggingEl) {
+        debugLoggingEl.checked = settings.debugLogging === true;
     }
 
     const useCharBookEl = document.getElementById('ss-use-char-book');
@@ -855,6 +887,20 @@ export function renderSettingsUI(settings, callbacks) {
         settings.fab.enabled = e.target.checked;
         saveSettings(settings);
         updateFabVisibility();
+    });
+
+    debugLoggingEl?.addEventListener('change', (e) => {
+        settings.debugLogging = e.target.checked;
+        saveSettings(settings);
+        try {
+            localStorage.setItem('ss_debug', e.target.checked ? 'true' : 'false');
+        } catch {
+            // Ignore storage failures; settings persistence still controls the logger.
+        }
+    });
+
+    document.getElementById('ss-export-debug-settings-btn')?.addEventListener('click', async () => {
+        await openDebugExportModal(settings);
     });
 
     document.getElementById('ss-run-summarize')?.addEventListener('click', () => {

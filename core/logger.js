@@ -1,7 +1,13 @@
+import { extension_settings } from '../../../../extensions.js';
+
 const PREFIX = '[SummarySharder]';
 
 export function isDebugEnabled() {
     try {
+        const settingsValue = extension_settings?.summary_sharder?.debugLogging;
+        if (typeof settingsValue === 'boolean') {
+            return settingsValue;
+        }
         return localStorage.getItem('ss_debug') === 'true';
     } catch {
         return false;

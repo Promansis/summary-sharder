@@ -251,6 +251,21 @@ export const SETTINGS_PANEL_CSS = `
     gap: 6px;
 }
 
+#summary-sharder-settings .ss-debug-suggestions {
+    border-top: 1px solid var(--ss-border);
+    padding-top: 6px;
+}
+
+#summary-sharder-settings .ss-debug-suggestions > label {
+    display: block;
+    margin-bottom: 4px;
+}
+
+#summary-sharder-settings .ss-accordion-content code {
+    font-family: var(--ss-font-muted, monospace);
+    font-size: 0.95em;
+}
+
 /* Prompts List */
 #ss-prompts-list {
     margin-bottom: 8px;

@@ -161,6 +161,8 @@ export function getDefaultSettings() {
             position: { x: null, y: null },
         },
 
+        debugLogging: false,
+
         // RAG (Retrieval-Augmented Generation) settings
         rag: {
             enabled: false,
@@ -596,6 +598,11 @@ export function migrateSettings(settings) {
     if (settings.ragStandard === undefined) {
         settings.ragStandard = getDefaultSettings().ragStandard;
         log.debug('Added ragStandard settings block');
+        migrated = true;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(extension_settings.summary_sharder || {}, 'debugLogging')) {
+        settings.debugLogging = isDebugEnabled();
         migrated = true;
     }
 

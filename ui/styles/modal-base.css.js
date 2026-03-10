@@ -295,6 +295,29 @@ body:not(.ss-theme-default) .popup.ss-owned-popup .popup-content h3,
     border-color: var(--ss-primary);
 }
 
+.ss-debug-export-modal {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: min(900px, 80vw);
+}
+
+.ss-debug-export-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.ss-debug-export-textarea {
+    width: 100%;
+    min-height: min(56vh, 540px);
+    resize: vertical;
+    font-family: var(--ss-font-muted, Consolas, monospace);
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre;
+}
+
 /* ==========================================================================
    SECTION 6: SECTIONS, PANELS & BLOCKS
    ========================================================================== */
