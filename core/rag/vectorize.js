@@ -16,7 +16,9 @@ import {
 import {
     getShardCollectionId,
     getStandardCollectionId,
+    getWriteTargetCollectionId,
 } from './collection-manager.js';
+import { resolveEffectiveBindingState } from './collection-bindings.js';
 import {
     buildChunkHash,
     chunkShard,
@@ -34,6 +36,82 @@ const STOP_WORDS = new Set([
     'his', 'her', 'not', 'so', 'if', 'then', 'than', 'too', 'very', 'can',
     'could', 'would', 'should', 'will', 'just', 'about', 'into', 'over', 'after',
 ]);
+
+function normalizeChatId(chatId) {
+    return String(chatId || '').trim().replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
+}
+
+function getCurrentVectorWriteContext(settings) {
+    const ctx = SillyTavern.getContext();
+    const chatId = normalizeChatId(ctx?.chatId || '');
+    const charIdx = ctx?.characterId;
+    const avatar = (charIdx !== undefined && charIdx !== null)
+        ? String(ctx?.characters?.[charIdx]?.avatar || '').trim()
+        : '';
+    const isSharder = settings?.sharderMode === true;
+    const ownCollectionId = chatId
+        ? (isSharder ? getShardCollectionId(chatId) : getStandardCollectionId(chatId))
+        : '';
+    const state = resolveEffectiveBindingState(chatId, avatar, settings, ownCollectionId);
+    const collectionId = getWriteTargetCollectionId(chatId, settings);
+    const scope = state.effectiveWriteSource || 'own';
+    const scopeLabel = scope === 'chat'
+        ? 'Chat collection'
+        : (scope === 'character' ? 'Character collection' : 'Own collection');
+
+    return {
+        chatId,
+        avatar,
+        ownCollectionId,
+        collectionId,
+        scope,
+        scopeLabel,
+        isOwnCollection: !!collectionId && collectionId === ownCollectionId,
+    };
+}
+
+function annotateSummaryChunks(chunks, origin) {
+    const list = Array.isArray(chunks) ? chunks : [];
+    for (const chunk of list) {
+        if (!chunk?.metadata) continue;
+        chunk.metadata.originChatId = origin.chatId || '';
+        chunk.metadata.originCharacterAvatar = origin.avatar || '';
+        chunk.metadata.originWriteScope = origin.scope || 'own';
+        chunk.metadata.originCollectionId = origin.collectionId || '';
+        const originalHash = String(chunk.hash ?? chunk.metadata.hash ?? '');
+        const scopedHash = buildChunkHash(`${originalHash}|${origin.chatId}|${origin.collectionId}`);
+        chunk.hash = scopedHash;
+        chunk.metadata.hash = scopedHash;
+        chunk.metadata.text = chunk.text;
+    }
+    return list;
+}
+
+function filterChunksForOrigin(items, origin) {
+    const ownCollectionId = String(origin?.ownCollectionId || '').trim();
+    const collectionId = String(origin?.collectionId || '').trim();
+    const chatId = String(origin?.chatId || '').trim();
+    const allowLegacyOwn = !!collectionId && collectionId === ownCollectionId;
+
+    return (Array.isArray(items) ? items : []).filter(item => {
+        const itemOriginChatId = String(item?.metadata?.originChatId || '').trim();
+        if (itemOriginChatId) {
+            return itemOriginChatId === chatId;
+        }
+        return allowLegacyOwn;
+    });
+}
+
+async function listAllChunksForOrigin(collectionId, ragSettings, origin) {
+    const all = await listAllChunks(collectionId, ragSettings);
+    return filterChunksForOrigin(all, origin);
+}
+
+function maybeShowVectorizeToast(chunkCount, origin) {
+    if (typeof toastr === 'undefined') return;
+    const count = Math.max(1, Number(chunkCount) || 1);
+    toastr.info(`Saving ${count} vector chunk${count !== 1 ? 's' : ''} to ${origin.scopeLabel}: ${origin.collectionId}`);
+}
 
 /**
  * Resolve effective shard chunking mode from rag settings.
@@ -282,8 +360,11 @@ export async function vectorizeShard(shardText, startIdx, endIdx, settings, keyw
         ? keywords
         : extractKeywordsTfIdf(shardText);
 
+    const origin = getCurrentVectorWriteContext(settings);
     const chunk = chunkShard(shardText, startIdx, endIdx, effectiveKeywords);
-    const collectionId = getShardCollectionId();
+    annotateSummaryChunks([chunk], origin);
+    const collectionId = origin.collectionId;
+    maybeShowVectorizeToast(1, origin);
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, [chunk], ragSettings);
 
@@ -319,6 +400,7 @@ export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, se
         ? keywords
         : extractKeywordsTfIdf(shardText);
 
+    const origin = getCurrentVectorWriteContext(settings);
     const { chunks, resolvedEntities } = chunkShardBySection(
         shardText,
         startIdx,
@@ -326,6 +408,7 @@ export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, se
         effectiveKeywords,
         Date.now(),
     );
+    annotateSummaryChunks(chunks, origin);
 
     if (!Array.isArray(chunks) || chunks.length === 0) {
         const fallbackResult = await vectorizeShard(shardText, startIdx, endIdx, settings, effectiveKeywords);
@@ -340,8 +423,8 @@ export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, se
         };
     }
 
-    const collectionId = getShardCollectionId();
-    const existing = await listAllChunks(collectionId, ragSettings);
+    const collectionId = origin.collectionId;
+    const existing = await listAllChunksForOrigin(collectionId, ragSettings, origin);
 
     const existingSuperseding = [];
     const existingRollingByEntity = new Map();
@@ -430,6 +513,7 @@ export async function vectorizeShardSectionAware(shardText, startIdx, endIdx, se
 
     let inserted = 0;
     if (toInsert.length > 0) {
+        maybeShowVectorizeToast(toInsert.length, origin);
         throwIfAborted('rag vectorization');
         const result = await insertChunks(collectionId, toInsert, ragSettings);
         inserted = result.inserted || toInsert.length;
@@ -460,14 +544,16 @@ async function vectorizeAllShardsStandard(settings) {
         return { inserted: 0, total: 0 };
     }
 
-    const collectionId = getShardCollectionId();
+    const origin = getCurrentVectorWriteContext(settings);
+    const collectionId = origin.collectionId;
     const shardItems = await collectExistingShards(settings);
     if (shardItems.length === 0) {
         return { inserted: 0, total: 0 };
     }
 
     const chunks = shardItems.map(item => chunkShard(item.text, item.startIndex, item.endIndex, item.keywords));
-    const existing = await listAllChunks(collectionId, ragSettings);
+    annotateSummaryChunks(chunks, origin);
+    const existing = await listAllChunksForOrigin(collectionId, ragSettings, origin);
     const existingHashes = new Set(existing.map(item => String(item.hash)));
     const toInsert = chunks.filter(chunk => !existingHashes.has(String(chunk.hash)));
 
@@ -475,6 +561,7 @@ async function vectorizeAllShardsStandard(settings) {
         return { inserted: 0, total: chunks.length };
     }
 
+    maybeShowVectorizeToast(toInsert.length, origin);
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, toInsert, ragSettings);
     ragLog.log(`Bulk vectorized shard collection ${collectionId}: +${result.inserted || toInsert.length}`);
@@ -826,10 +913,13 @@ export async function vectorizeStandardSummary(text, startIdx, endIdx, settings,
         ? keywords
         : extractKeywordsTfIdf(text);
 
+    const origin = getCurrentVectorWriteContext(settings);
     const chunks = chunkProseSummary(text, startIdx, endIdx, effectiveKeywords, ragStd.proseChunkingMode);
     if (chunks.length === 0) return { inserted: 0, hash: null };
+    annotateSummaryChunks(chunks, origin);
 
-    const collectionId = getStandardCollectionId();
+    const collectionId = origin.collectionId;
+    maybeShowVectorizeToast(chunks.length, origin);
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, chunks, ragStd);
 
@@ -849,7 +939,8 @@ export async function vectorizeAllStandardSummaries(settings) {
         return { inserted: 0, total: 0 };
     }
 
-    const collectionId = getStandardCollectionId();
+    const origin = getCurrentVectorWriteContext(settings);
+    const collectionId = origin.collectionId;
     const shardItems = await collectStandardShards(settings);
     if (shardItems.length === 0) {
         return { inserted: 0, total: 0 };
@@ -858,8 +949,9 @@ export async function vectorizeAllStandardSummaries(settings) {
     const allChunks = shardItems.flatMap(item =>
         chunkProseSummary(item.text, item.startIndex, item.endIndex, item.keywords, ragStd.proseChunkingMode)
     );
+    annotateSummaryChunks(allChunks, origin);
 
-    const existing = await listAllChunks(collectionId, ragStd);
+    const existing = await listAllChunksForOrigin(collectionId, ragStd, origin);
     const existingHashes = new Set(existing.map(item => String(item.hash)));
     const toInsert = allChunks.filter(chunk => !existingHashes.has(String(chunk.hash)));
 
@@ -867,6 +959,7 @@ export async function vectorizeAllStandardSummaries(settings) {
         return { inserted: 0, total: allChunks.length };
     }
 
+    maybeShowVectorizeToast(toInsert.length, origin);
     throwIfAborted('rag vectorization');
     const result = await insertChunks(collectionId, toInsert, ragStd);
     ragLog.log(`Bulk vectorized standard collection ${collectionId}: +${result.inserted || toInsert.length}`);

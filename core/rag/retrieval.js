@@ -5,7 +5,7 @@
 
 import { setExtensionPrompt } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
-import { getActiveCollectionIds, getPrimaryCollectionId, getShardCollectionId } from './collection-manager.js';
+import { getActiveCollectionIds, getWriteTargetCollectionId, getShardCollectionId, getStandardCollectionId } from './collection-manager.js';
 import { rerankDocuments } from './reranker-client.js';
 import { hybridQuery, listChunks, queryChunks } from './vector-client.js';
 import { keywordBoost, runClientHybridFusion, scoreAndRank } from './scoring.js';
@@ -58,6 +58,52 @@ let lastInjectionData = null;
 const fallbackCache = new Map();
 const FALLBACK_CACHE_TTL = 30000; // 30 seconds
 
+function normalizeChatId(chatId) {
+    return String(chatId || '').trim().replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
+}
+
+function getCurrentRetrievalOrigin(settings) {
+    const ctx = SillyTavern.getContext();
+    const chatId = normalizeChatId(ctx?.chatId || '');
+    const isSharder = settings?.sharderMode === true;
+    let ownCollectionId = '';
+    try {
+        ownCollectionId = chatId
+            ? (isSharder ? getShardCollectionId(chatId) : getStandardCollectionId(chatId))
+            : '';
+    } catch {
+        ownCollectionId = '';
+    }
+
+    return {
+        chatId,
+        ownCollectionId,
+    };
+}
+
+function isSharedWriteTarget(origin, collectionId) {
+    const ownCollectionId = String(origin?.ownCollectionId || '').trim();
+    const id = String(collectionId || '').trim();
+    return !!id && !!ownCollectionId && id !== ownCollectionId;
+}
+
+function buildScopedMetadataFilter(origin, base = {}) {
+    const filter = { ...(base || {}) };
+    if (isSharedWriteTarget(origin, origin?.collectionId) && origin?.chatId) {
+        filter.originChatId = origin.chatId;
+    }
+    return filter;
+}
+
+function filterResultsForOrigin(results, origin) {
+    const scoped = isSharedWriteTarget(origin, origin?.collectionId);
+    if (!scoped) return Array.isArray(results) ? results : [];
+
+    return (Array.isArray(results) ? results : []).filter(item =>
+        String(item?.metadata?.originChatId || '').trim() === String(origin?.chatId || '').trim()
+    );
+}
+
 /**
  * Invalidate the fallback cache for a specific collection or all collections.
  * @param {string} [collectionId] - If omitted, clears all collections.
@@ -84,8 +130,8 @@ export function invalidateFallbackCache(collectionId = null) {
  * @param {Function} fetchFn 
  * @returns {Promise<any>}
  */
-async function fetchWithFallbackCache(collectionId, rag, type, limit, fetchFn) {
-    const key = `${collectionId}:${type}:${limit}`;
+async function fetchWithFallbackCache(collectionId, rag, type, limit, fetchFn, cacheScope = '') {
+    const key = `${collectionId}:${type}:${limit}:${cacheScope}`;
     const cached = fallbackCache.get(key);
     if (cached && (Date.now() - cached.timestamp < FALLBACK_CACHE_TTL)) {
         return cached.data;
@@ -213,12 +259,12 @@ function dedupeResults(results) {
  * @param {Object} rag
  * @returns {Promise<Object|null>}
  */
-export async function fetchLatestSuperseding(collectionId, rag) {
+export async function fetchLatestSuperseding(collectionId, rag, origin = null) {
     return fetchWithFallbackCache(collectionId, rag, 'superseding', 1, async (id, r) => {
         try {
             const { items } = await listChunks(id, r, {
                 limit: 20,
-                metadataFilter: { chunkBehavior: 'superseding' },
+                metadataFilter: buildScopedMetadataFilter({ ...(origin || {}), collectionId: id }, { chunkBehavior: 'superseding' }),
             });
             if (!Array.isArray(items) || items.length === 0) return null;
 
@@ -228,7 +274,7 @@ export async function fetchLatestSuperseding(collectionId, rag) {
             ragLog.warn('Fallback superseding fetch failed:', error?.message || error);
             return null;
         }
-    });
+    }, String(origin?.chatId || ''));
 }
 
 /**
@@ -239,13 +285,13 @@ export async function fetchLatestSuperseding(collectionId, rag) {
  * @param {number} [limit=50]
  * @returns {Promise<{items: Array<Object>, fetchedCount: number, hasMore: boolean}>}
  */
-export async function fetchLatestRolling(collectionId, rag, limit = 50) {
+export async function fetchLatestRolling(collectionId, rag, limit = 50, origin = null) {
     return fetchWithFallbackCache(collectionId, rag, 'rolling', limit, async (id, r, l) => {
         try {
             const safeLimit = Math.max(1, Number(l) || 50);
             const { items, hasMore } = await listChunks(id, r, {
                 limit: safeLimit,
-                metadataFilter: { chunkBehavior: 'rolling' },
+                metadataFilter: buildScopedMetadataFilter({ ...(origin || {}), collectionId: id }, { chunkBehavior: 'rolling' }),
             });
 
             const safeItems = Array.isArray(items) ? items : [];
@@ -257,12 +303,12 @@ export async function fetchLatestRolling(collectionId, rag, limit = 50) {
         } catch (error) {
             ragLog.warn('Fallback rolling fetch failed:', error?.message || error);
             return {
-                items: [],
+                items: [], 
                 fetchedCount: 0,
                 hasMore: false,
             };
         }
-    });
+    }, String(origin?.chatId || ''));
 }
 
 /**
@@ -272,13 +318,13 @@ export async function fetchLatestRolling(collectionId, rag, limit = 50) {
  * @param {number} [limit=50]
  * @returns {Promise<{items: Array<{key: string, text: string, freshness: number, score: number}>, fetchedCount: number, hasMore: boolean}>}
  */
-export async function fetchLatestAnchors(collectionId, rag, limit = 50) {
+export async function fetchLatestAnchors(collectionId, rag, limit = 50, origin = null) {
     return fetchWithFallbackCache(collectionId, rag, 'anchors', limit, async (id, r, l) => {
         try {
             const safeLimit = Math.max(1, Number(l) || 50);
             const { items, hasMore } = await listChunks(id, r, {
                 limit: safeLimit,
-                metadataFilter: { chunkBehavior: 'cumulative' },
+                metadataFilter: buildScopedMetadataFilter({ ...(origin || {}), collectionId: id }, { chunkBehavior: 'cumulative' }),
             });
 
             const safeItems = Array.isArray(items) ? items : [];
@@ -295,7 +341,7 @@ export async function fetchLatestAnchors(collectionId, rag, limit = 50) {
                 hasMore: false,
             };
         }
-    });
+    }, String(origin?.chatId || ''));
 }
 
 /**
@@ -305,13 +351,13 @@ export async function fetchLatestAnchors(collectionId, rag, limit = 50) {
  * @param {number} [limit=50]
  * @returns {Promise<{items: Array<{text: string, freshness: number, score: number}>, fetchedCount: number, hasMore: boolean}>}
  */
-export async function fetchLatestDevelopments(collectionId, rag, limit = 50) {
+export async function fetchLatestDevelopments(collectionId, rag, limit = 50, origin = null) {
     return fetchWithFallbackCache(collectionId, rag, 'developments', limit, async (id, r, l) => {
         try {
             const safeLimit = Math.max(1, Number(l) || 50);
             const { items, hasMore } = await listChunks(id, r, {
                 limit: safeLimit,
-                metadataFilter: { chunkBehavior: 'cumulative' },
+                metadataFilter: buildScopedMetadataFilter({ ...(origin || {}), collectionId: id }, { chunkBehavior: 'cumulative' }),
             });
 
             const safeItems = Array.isArray(items) ? items : [];
@@ -328,7 +374,7 @@ export async function fetchLatestDevelopments(collectionId, rag, limit = 50) {
                 hasMore: false,
             };
         }
-    });
+    }, String(origin?.chatId || ''));
 }
 
 /**
@@ -483,7 +529,7 @@ function orderWithSceneGrouping(results) {
  * @param {string} primaryCollectionId
  * @returns {Promise<Array<Object>>}
  */
-async function expandByScene(settings, shardResults, primaryCollectionId) {
+async function expandByScene(settings, shardResults, primaryCollectionId, origin = null) {
     const rag = settings?.rag;
     if (!rag?.sceneExpansion || !Array.isArray(shardResults) || shardResults.length === 0) {
         return [];
@@ -513,9 +559,9 @@ async function expandByScene(settings, shardResults, primaryCollectionId) {
             const room = Math.max(1, maxSceneExpansionChunks - expanded.length);
             const { items } = await listChunks(collectionId, rag, {
                 limit: room,
-                metadataFilter: { sceneCode },
+                metadataFilter: buildScopedMetadataFilter({ ...(origin || {}), collectionId }, { sceneCode }),
             });
-            for (const item of (items || [])) {
+            for (const item of filterResultsForOrigin(items || [], { ...(origin || {}), collectionId })) {
                 expanded.push(item);
                 if (expanded.length >= maxSceneExpansionChunks) break;
             }
@@ -796,10 +842,14 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         const threshold = Math.max(0, Math.min(1, Number(rag.scoreThreshold) || 0.25));
 
         // Multi-collection: query all bound collections in parallel, deduplicate results.
-        // primaryCollectionId is used for fallback fetches (superseding/rolling/anchors)
-        // which are chat-specific and should not be scattered across shared collections.
+        // writeTargetCollectionId is used for continuity-style fallback fetches
+        // (superseding/rolling/anchors/latest), which must stay scoped to this chat.
         const collectionIds = getActiveCollectionIds(null, settings);
-        const primaryCollectionId = getPrimaryCollectionId(null, settings);
+        const writeTargetCollectionId = getWriteTargetCollectionId(null, settings);
+        const origin = {
+            ...getCurrentRetrievalOrigin(settings),
+            collectionId: writeTargetCollectionId,
+        };
 
         const queryFn = useNativeHybrid ? hybridQuery : queryChunks;
 
@@ -821,13 +871,15 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         // Uses primary collection only — "latest" is scoped to this chat's own output.
         if (!isSharder) {
             try {
-                const { items: latestItems } = await listChunks(primaryCollectionId, rag, {
+                const { items: latestItems } = await listChunks(writeTargetCollectionId, rag, {
                     limit: Math.max(1, Number(rag.insertCount) || 5),
+                    metadataFilter: buildScopedMetadataFilter(origin),
                 });
                 if (Array.isArray(latestItems) && latestItems.length > 0) {
                     // Sort by endIndex descending to get truly latest
-                    latestItems.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
-                    merged = dedupeResults([...merged, ...latestItems]);
+                    const filteredLatestItems = filterResultsForOrigin(latestItems, origin);
+                    filteredLatestItems.sort((a, b) => getFreshnessEndIndex(b) - getFreshnessEndIndex(a));
+                    merged = dedupeResults([...merged, ...filteredLatestItems]);
                 }
             } catch (error) {
                 ragLog.warn('Standard mode latest-fallback fetch failed:', error?.message || error);
@@ -847,7 +899,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
 
         // Scene expansion only applies to Sharder Mode (which has [S{n}:{n}] scene codes).
         // Uses the primary collection — scene codes are specific to this chat's own summaries.
-        const sceneExpanded = isSharder ? await expandByScene(settings, shardResults, primaryCollectionId) : [];
+        const sceneExpanded = isSharder ? await expandByScene(settings, shardResults, writeTargetCollectionId, origin) : [];
 
         merged = dedupeResults([...merged, ...sceneExpanded]);
 
@@ -855,7 +907,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         // This ensures the "Current State" summary is always available if it exists in the collection.
         // Uses primary collection only — superseding chunks are chat-specific.
         if (isSharder && !merged.some(item => item?.metadata?.chunkBehavior === 'superseding')) {
-            const latest = await fetchLatestSuperseding(primaryCollectionId, rag);
+            const latest = await fetchLatestSuperseding(writeTargetCollectionId, rag, origin);
             if (latest) {
                 merged.push(latest);
                 merged = dedupeResults(merged);
@@ -881,9 +933,9 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             // Fallback fetches use primary collection — rolling/anchors/developments
             // are generated by this chat's own summarization pipeline.
             const [fallbackRolling, fallbackAnchors, fallbackDevelopments] = await Promise.all([
-                fetchLatestRolling(primaryCollectionId, rag, 50),
-                fetchLatestAnchors(primaryCollectionId, rag, 50),
-                fetchLatestDevelopments(primaryCollectionId, rag, 50),
+                fetchLatestRolling(writeTargetCollectionId, rag, 50, origin),
+                fetchLatestAnchors(writeTargetCollectionId, rag, 50, origin),
+                fetchLatestDevelopments(writeTargetCollectionId, rag, 50, origin),
             ]);
 
             rollingPinned = mergeLatestRolling(queryRolling, fallbackRolling.items);
@@ -995,7 +1047,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             useNativeHybrid,
             useClientHybrid,
             collectionIds,
-            primaryCollectionId,
+            writeTargetCollectionId,
             shardResults: shardResults.length,
             sceneExpanded: sceneExpanded.length,
             rollingPinned: rollingPinned.length,

@@ -1,5 +1,5 @@
 /**
- * Collection Manager - Collection naming conventions and lifecycle
+ * Collection Manager - collection naming conventions and lifecycle.
  * Manages collection IDs and cleanup when chats are deleted.
  */
 
@@ -10,34 +10,22 @@ import { ragLog } from '../logger.js';
 import {
     hasAnyBinding,
     resolveCollectionIds,
-    resolvePrimaryCollectionId,
+    resolveWriteTargetId,
 } from './collection-bindings.js';
 
 const SHARD_PREFIX = 'ss_shards_';
 const STANDARD_PREFIX = 'ss_standard_';
 
-/**
- * Normalize chat IDs to avoid extension-based collection splits.
- * @param {string} chatId
- * @returns {string}
- */
 function normalizeChatId(chatId) {
     const raw = String(chatId || '').trim();
     if (!raw) return '';
     return raw.replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
 }
 
-/**
- * Produce backend-safe collection key from a chat ID.
- * Qdrant path-based APIs can break on reserved URL characters like '#',
- * so we sanitize aggressively and append a stable hash to avoid collisions.
- * @param {string} chatId
- * @returns {string}
- */
 function toSafeCollectionKey(chatId) {
     const raw = normalizeChatId(chatId);
 
-    let hash = 2166136261; // FNV-1a 32-bit offset basis
+    let hash = 2166136261;
     for (let i = 0; i < raw.length; i++) {
         hash ^= raw.charCodeAt(i);
         hash = Math.imul(hash, 16777619);
@@ -55,18 +43,10 @@ function toSafeCollectionKey(chatId) {
     return `${stem}_${hashHex}`;
 }
 
-/**
- * Get the current chat ID from SillyTavern context
- * @returns {string|null}
- */
 function getCurrentChatId() {
     return SillyTavern.getContext()?.chatId ?? null;
 }
 
-/**
- * Get the current character's avatar filename from SillyTavern context.
- * @returns {string|null}
- */
 function getCurrentCharacterAvatar() {
     const ctx = SillyTavern.getContext();
     const idx = ctx?.characterId;
@@ -74,11 +54,6 @@ function getCurrentCharacterAvatar() {
     return ctx?.characters?.[idx]?.avatar ?? null;
 }
 
-/**
- * Get the alias source chat ID for a chat (if any).
- * @param {string} [chatId] - Chat ID (defaults to current chat)
- * @returns {string|null}
- */
 export function getCollectionAlias(chatId) {
     const id = normalizeChatId(chatId || getCurrentChatId());
     if (!id) return null;
@@ -87,11 +62,6 @@ export function getCollectionAlias(chatId) {
     return alias ? String(alias) : null;
 }
 
-/**
- * Set or clear an alias for a chat's collection.
- * @param {string} [chatId] - Chat ID (defaults to current chat)
- * @param {string|null} sourceChatId - Source chat ID to alias to, or null to clear
- */
 export function setCollectionAlias(chatId, sourceChatId) {
     const id = normalizeChatId(chatId || getCurrentChatId());
     if (!id) return;
@@ -109,11 +79,6 @@ export function setCollectionAlias(chatId, sourceChatId) {
     ss.collectionAliases[id] = normalizeChatId(sourceChatId);
 }
 
-/**
- * Get the collection ID for Memory Shards
- * @param {string} [chatId] - Chat ID (defaults to current chat)
- * @returns {string} Collection ID in format 'ss_shards_{chatId}'
- */
 export function getShardCollectionId(chatId) {
     const id = chatId || getCurrentChatId();
     if (!id) {
@@ -122,11 +87,6 @@ export function getShardCollectionId(chatId) {
     return `${SHARD_PREFIX}${toSafeCollectionKey(id)}`;
 }
 
-/**
- * Get the collection ID for Standard Mode summaries
- * @param {string} [chatId] - Chat ID (defaults to current chat)
- * @returns {string} Collection ID in format 'ss_standard_{chatId}'
- */
 export function getStandardCollectionId(chatId) {
     const id = chatId || getCurrentChatId();
     if (!id) {
@@ -135,11 +95,6 @@ export function getStandardCollectionId(chatId) {
     return `${STANDARD_PREFIX}${toSafeCollectionKey(id)}`;
 }
 
-/**
- * Get the direct collection ID override for a chat (if any).
- * @param {string} [chatId] - Chat ID (defaults to current chat)
- * @returns {string|null}
- */
 export function getCollectionIdOverride(chatId) {
     const id = normalizeChatId(chatId || getCurrentChatId());
     if (!id) return null;
@@ -148,11 +103,6 @@ export function getCollectionIdOverride(chatId) {
     return override ? String(override) : null;
 }
 
-/**
- * Set or clear a direct collection ID override for a chat.
- * @param {string} [chatId] - Chat ID (defaults to current chat)
- * @param {string|null} collectionId - Collection ID to bind, or null to clear
- */
 export function setCollectionIdOverride(chatId, collectionId) {
     const id = normalizeChatId(chatId || getCurrentChatId());
     if (!id) return;
@@ -170,25 +120,10 @@ export function setCollectionIdOverride(chatId, collectionId) {
     ss.collectionIdOverrides[id] = String(collectionId);
 }
 
-/**
- * Get the primary collection ID for a chat — where new vectorizations are written.
- *
- * Resolution order (highest → lowest priority):
- *   1. Chat-level binding primaryCollection (new system)
- *   2. Character-level binding primaryCollection (new system)
- *   3. Legacy collectionIdOverride (old system, kept for compat)
- *   4. Legacy collectionAlias (old system, kept for compat)
- *   5. Own auto-generated collection
- *
- * @param {string|null} [chatId] - Chat ID (defaults to current chat)
- * @param {Object} [settings] - Extension settings
- * @returns {string}
- */
-export function getPrimaryCollectionId(chatId, settings) {
+export function getWriteTargetCollectionId(chatId, settings) {
     const resolvedChatId = normalizeChatId(chatId || getCurrentChatId());
     const isSharder = settings?.sharderMode === true;
 
-    // Compute own collection baseline (no overrides applied)
     let ownId = '';
     try {
         if (resolvedChatId) {
@@ -200,16 +135,13 @@ export function getPrimaryCollectionId(chatId, settings) {
         // no active chat
     }
 
-    // New binding system: chat-level → character-level
     const avatar = getCurrentCharacterAvatar();
-    const primary = resolvePrimaryCollectionId(resolvedChatId, avatar, settings, ownId);
-    if (primary && primary !== ownId) return primary;
+    const writeTarget = resolveWriteTargetId(resolvedChatId, avatar, settings, ownId);
+    if (writeTarget && writeTarget !== ownId) return writeTarget;
 
-    // Legacy: direct override
     const override = settings?.collectionIdOverrides?.[resolvedChatId];
     if (override) return String(override);
 
-    // Legacy: alias
     const alias = settings?.collectionAliases?.[resolvedChatId];
     const targetChatId = normalizeChatId(alias ? String(alias) : resolvedChatId);
 
@@ -218,26 +150,15 @@ export function getPrimaryCollectionId(chatId, settings) {
         : getStandardCollectionId(targetChatId);
 }
 
-/**
- * Get the active collection ID based on the current mode.
- * Alias for getPrimaryCollectionId — kept for backward compatibility.
- * @param {string|null} [chatId] - Chat ID (defaults to current chat)
- * @param {Object} [settings] - Extension settings
- * @returns {string}
- */
 export function getActiveCollectionId(chatId, settings) {
-    return getPrimaryCollectionId(chatId, settings);
+    return getWriteTargetCollectionId(chatId, settings);
 }
 
-/**
- * Get all collection IDs to query for the current chat.
- * Includes the own collection plus any additional collections from bindings.
- * When no bindings exist, falls back to the single primary collection.
- *
- * @param {string|null} [chatId] - Chat ID (defaults to current chat)
- * @param {Object} [settings] - Extension settings
- * @returns {string[]}
- */
+// Backward-compatible alias during transition.
+export function getPrimaryCollectionId(chatId, settings) {
+    return getWriteTargetCollectionId(chatId, settings);
+}
+
 export function getActiveCollectionIds(chatId, settings) {
     const resolvedChatId = normalizeChatId(chatId || getCurrentChatId());
     const isSharder = settings?.sharderMode === true;
@@ -254,22 +175,13 @@ export function getActiveCollectionIds(chatId, settings) {
     }
 
     const avatar = getCurrentCharacterAvatar();
-
-    // Use new binding system if any binding is set
     if (hasAnyBinding(resolvedChatId, avatar, settings)) {
         return resolveCollectionIds(resolvedChatId, avatar, settings, ownId);
     }
 
-    // Fall back to single-collection via legacy path
-    const primary = getPrimaryCollectionId(resolvedChatId, settings);
-    return primary ? [primary] : (ownId ? [ownId] : []);
+    return ownId ? [ownId] : [];
 }
 
-/**
- * Purge shard collection for a given chat
- * @param {string} chatId - Chat ID to purge collections for
- * @param {Object} ragSettings - The settings.rag object
- */
 export async function purgeAllCollections(chatId, ragSettings) {
     if (!chatId || !ragSettings?.enabled) return;
 
@@ -285,10 +197,6 @@ export async function purgeAllCollections(chatId, ragSettings) {
     }
 }
 
-/**
- * Initialize collection lifecycle management
- * Registers event handlers for automatic cleanup when chats are deleted.
- */
 export function initCollectionLifecycle() {
     eventSource.on(event_types.CHAT_DELETED, async (chatId) => {
         const ss = extension_settings.summary_sharder;

@@ -1,25 +1,21 @@
 /**
  * Branch Collection Picker Modal
  *
- * Shown when a new branch chat is opened that has no RAG bindings.
- * Offers the user a chance to inherit (link) or skip collections from the parent chat.
- *
- * Detection logic lives in index.js (onChatChanged). This module only handles UI + saving.
+ * Shown when a new branch chat opens and the parent has chat-specific collections
+ * or private vectorized data worth carrying forward.
  */
 
 import { Popup, POPUP_TYPE } from '../../../../../../popup.js';
 import { extension_settings } from '../../../../../../extensions.js';
 import {
-    resolveCollectionIds,
+    getChatBinding,
+    getCollectionStats,
+    listAllCollections,
     getShardCollectionId,
     getStandardCollectionId,
     setChatBinding,
 } from '../../../core/rag/index.js';
 import { saveSettings } from '../../../core/settings.js';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function escapeHtml(text) {
     return String(text || '')
@@ -32,152 +28,159 @@ function escapeHtml(text) {
 
 function truncate(text, max = 60) {
     const v = String(text || '').trim();
-    return v.length > max ? `${v.slice(0, max - 1)}\u2026` : v;
+    return v.length > max ? `${v.slice(0, max - 1)}...` : v;
 }
 
 function normalizeChatId(chatId) {
     return String(chatId || '').trim().replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
 }
 
-// ---------------------------------------------------------------------------
-// HTML builders
-// ---------------------------------------------------------------------------
+function buildCollectionRow(option) {
+    const collectionId = option?.id || '';
+    const badges = Array.isArray(option?.badges) ? [...option.badges] : [];
+    const chunkCount = Number.isFinite(option?.chunkCount) ? Number(option.chunkCount) : null;
+    if (chunkCount === 0) {
+        badges.push('<span class="ss-bp-badge ss-bp-badge-warning">0 chunks</span>');
+    }
 
-/**
- * Render a single collection row with Link/Skip radio buttons.
- * @param {string} collectionId
- * @param {boolean} isParentOwn - True when this is the parent's auto-generated collection
- * @returns {string}
- */
-function buildCollectionRow(collectionId, isParentOwn) {
-    const badge = isParentOwn
-        ? '<span class="ss-bp-badge ss-bp-badge-own">parent\'s own</span>'
-        : '';
+    const chunkLabel = chunkCount === null
+        ? 'Chunk count unavailable'
+        : `${chunkCount} chunk${chunkCount === 1 ? '' : 's'}`;
     return `
-        <div class="ss-bp-collection-row" data-collection-id="${escapeHtml(collectionId)}">
-            <div class="ss-bp-row-header">
-                <span class="ss-bp-row-id" title="${escapeHtml(collectionId)}">${escapeHtml(truncate(collectionId, 56))}</span>
-                ${badge}
+        <label class="ss-bp-collection-row">
+            <input type="checkbox" class="ss-bp-link-check" data-collection-id="${escapeHtml(collectionId)}" checked />
+            <div class="ss-bp-row-content">
+                <div class="ss-bp-row-header">
+                    <span class="ss-bp-row-id" title="${escapeHtml(collectionId)}">${escapeHtml(truncate(collectionId, 56))}</span>
+                    ${badges.join('')}
+                </div>
+                <div class="ss-bp-row-meta">${escapeHtml(chunkLabel)}</div>
+                <div class="ss-bp-action-hint">Add to branch reads.</div>
             </div>
-            <div class="ss-bp-row-actions">
-                <label class="ss-bp-action-label ss-bp-action-link">
-                    <input type="radio" name="ss-bp-action-${escapeHtml(collectionId)}" value="link" checked />
-                    Link
-                    <span class="ss-bp-action-hint">shared read access</span>
-                </label>
-                <label class="ss-bp-action-label">
-                    <input type="radio" name="ss-bp-action-${escapeHtml(collectionId)}" value="skip" />
-                    Skip
-                </label>
-            </div>
-        </div>
+        </label>
     `;
 }
 
-/**
- * Build the full modal HTML.
- * @param {string} parentChatId
- * @param {string[]} collectionIds - All parent collection IDs (resolved)
- * @param {string} parentOwnId - Parent's auto-generated collection ID
- * @returns {string}
- */
-function buildModalHtml(parentChatId, collectionIds, parentOwnId) {
-    const collectionRows = collectionIds
-        .map(id => buildCollectionRow(id, id === parentOwnId))
-        .join('');
-
-    const primaryOptions = collectionIds
-        .map(id => `<option value="${escapeHtml(id)}">${escapeHtml(truncate(id, 52))}</option>`)
-        .join('');
-
+function buildModalHtml(parentChatId, options) {
+    const rows = options.map(option => buildCollectionRow(option)).join('');
     return `
         <div class="ss-branch-picker-modal">
             <h3 class="ss-rag-title">
                 <i class="fa-solid fa-code-branch"></i>
-                Collection Inheritance
+                Branch Collections
             </h3>
 
             <p class="ss-hint ss-rag-inline-hint ss-bp-parent-hint">
-                This chat branched from
+                Parent chat:
                 <strong class="ss-bp-parent-name" title="${escapeHtml(parentChatId)}">${escapeHtml(truncate(parentChatId, 48))}</strong>.
-                Choose which parent collections to link to this branch.
-                Linked collections are shared (read-only) — vectors go to the primary.
+                Character collections are inherited automatically.
             </p>
 
+            <div class="ss-bp-migration-note ss-hint ss-rag-inline-hint">
+                <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                <span>Select any parent-chat collections to add to this branch.</span>
+            </div>
+
+            <div class="ss-bp-section-title">Collections</div>
+            <div id="ss-bp-selection-summary" class="ss-bp-selection-summary"></div>
             <div class="ss-bp-collections-list">
-                ${collectionRows}
+                ${rows}
             </div>
 
             <div class="ss-bp-primary-row">
-                <label class="ss-bp-primary-label" for="ss-bp-primary-select">
-                    Write new vectors to:
+                <label class="ss-bp-primary-label" for="ss-bp-write-target">
+                    Write Target
                 </label>
-                <select id="ss-bp-primary-select" class="text_pole ss-bp-primary-select">
-                    <option value="">This branch's own collection (default)</option>
-                    ${primaryOptions}
-                </select>
+                <select id="ss-bp-write-target" class="text_pole ss-bp-primary-select"></select>
             </div>
-
-            <label class="ss-bp-include-own-row">
-                <input type="checkbox" id="ss-bp-include-own" checked />
-                Also query this branch's own auto-generated collection
-            </label>
 
             <div class="ss-bp-footer">
                 <button id="ss-bp-apply" class="menu_button" type="button">
                     <i class="fa-solid fa-check"></i> Apply
                 </button>
                 <button id="ss-bp-skip-all" class="menu_button ss-bp-skip-btn" type="button">
-                    Skip All
+                    Keep Defaults
                 </button>
             </div>
         </div>
     `;
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
-/**
- * Show the Branch Collection Picker and, if the user applies, write a chat-level binding.
- *
- * Call this from index.js when a new branch is detected on CHAT_CHANGED.
- *
- * @param {string} branchChatId - The newly opened branch chat ID (normalized)
- * @param {string} parentChatId - The parent chat ID (from chat_metadata.main_chat)
- * @param {string|null} characterAvatar - Current character avatar key (e.g. "Alice.png")
- * @param {Object} settings - extension_settings.summary_sharder
- * @returns {Promise<void>}
- */
 export async function showBranchCollectionPicker(branchChatId, parentChatId, characterAvatar, settings) {
+    void characterAvatar;
     const ss = extension_settings?.summary_sharder;
     const isSharder = settings?.sharderMode === true;
+    const ragSettings = isSharder ? settings?.rag : settings?.ragStandard;
 
     const normalizedParent = normalizeChatId(parentChatId);
     const normalizedBranch = normalizeChatId(branchChatId);
-
     if (!normalizedParent || !normalizedBranch) return;
 
-    // Compute parent's own auto-generated collection ID
-    let parentOwnId = '';
+    const parentChatBinding = getChatBinding(normalizedParent, ss);
+    const parentOwnId = isSharder
+        ? getShardCollectionId(normalizedParent)
+        : getStandardCollectionId(normalizedParent);
+    const currentBackend = String(ragSettings?.backend || 'vectra').toLowerCase();
+
+    let parentOwnCount = 0;
     try {
-        parentOwnId = isSharder
-            ? getShardCollectionId(normalizedParent)
-            : getStandardCollectionId(normalizedParent);
-    } catch { /* no parent */ }
-
-    // Resolve all collection IDs the parent would query (bindings + own)
-    const parentCollectionIds = resolveCollectionIds(normalizedParent, characterAvatar ?? '', ss, parentOwnId);
-
-    if (parentCollectionIds.length === 0) {
-        // Nothing to inherit — parent had no collections at all
-        return;
+        const { stats } = await getCollectionStats(parentOwnId, ragSettings);
+        parentOwnCount = Number(stats?.count ?? stats?.total ?? 0) || 0;
+    } catch {
+        parentOwnCount = 0;
     }
 
-    const html = buildModalHtml(normalizedParent, parentCollectionIds, parentOwnId);
+    let allCollections = [];
+    try {
+        allCollections = await listAllCollections(currentBackend);
+    } catch {
+        allCollections = [];
+    }
 
-    const popup = new Popup(html, POPUP_TYPE.TEXT, null, {
+    const chunkCountMap = new Map(
+        (Array.isArray(allCollections) ? allCollections : [])
+            .filter(collection => String(collection?.backend || currentBackend).toLowerCase() === currentBackend)
+            .map(collection => [String(collection.id), Number(collection.chunkCount ?? 0) || 0]),
+    );
+
+    const optionMap = new Map();
+    const upsertOption = (id, badgeHtml) => {
+        const key = String(id || '').trim();
+        if (!key) return;
+
+        if (!optionMap.has(key)) {
+            optionMap.set(key, {
+                id: key,
+                badges: [],
+                chunkCount: chunkCountMap.has(key) ? Number(chunkCountMap.get(key)) || 0 : null,
+            });
+        }
+
+        const option = optionMap.get(key);
+        if (badgeHtml && !option.badges.includes(badgeHtml)) {
+            option.badges.push(badgeHtml);
+        }
+        if (key === parentOwnId) {
+            option.chunkCount = parentOwnCount;
+        }
+    };
+
+    for (const id of (parentChatBinding?.collections || [])) {
+        upsertOption(id, '<span class="ss-bp-badge ss-bp-badge-chat">parent chat</span>');
+    }
+    if (parentChatBinding?.writeTarget && parentChatBinding.writeTarget !== parentOwnId) {
+        upsertOption(parentChatBinding.writeTarget, '<span class="ss-bp-badge ss-bp-badge-chat">parent write target</span>');
+    }
+    if (parentOwnCount > 0) {
+        upsertOption(parentOwnId, '<span class="ss-bp-badge ss-bp-badge-own">parent own</span>');
+    }
+
+    const uniqueOptions = [...optionMap.values()];
+
+    const shouldOffer = uniqueOptions.length > 0;
+    if (!shouldOffer) return;
+
+    const popup = new Popup(buildModalHtml(normalizedParent, uniqueOptions), POPUP_TYPE.TEXT, null, {
         okButton: false,
         cancelButton: false,
         wide: false,
@@ -188,66 +191,112 @@ export async function showBranchCollectionPicker(branchChatId, parentChatId, cha
         const root = document.querySelector('.ss-branch-picker-modal');
         if (!root) return;
 
+        const selectionSummary = root.querySelector('#ss-bp-selection-summary');
+        const writeTargetSelect = root.querySelector('#ss-bp-write-target');
         const applyBtn = root.querySelector('#ss-bp-apply');
-        const skipAllBtn = root.querySelector('#ss-bp-skip-all');
-        const primarySelect = root.querySelector('#ss-bp-primary-select');
-        const includeOwnCheck = root.querySelector('#ss-bp-include-own');
+        const skipBtn = root.querySelector('#ss-bp-skip-all');
+        const optionsById = new Map(uniqueOptions.map(option => [option.id, option]));
 
-        /** Returns IDs for all rows where the user chose "link". */
-        function getLinkedIds() {
-            const linked = [];
-            for (const row of root.querySelectorAll('.ss-bp-collection-row')) {
-                const id = row.getAttribute('data-collection-id');
-                const checked = row.querySelector('input[type="radio"]:checked');
-                if (id && checked?.value === 'link') linked.push(id);
+        const getLinkedIds = () => {
+            const out = [];
+            for (const input of root.querySelectorAll('.ss-bp-link-check')) {
+                if (input instanceof HTMLInputElement && input.checked) {
+                    out.push(String(input.getAttribute('data-collection-id') || '').trim());
+                }
             }
-            return linked;
-        }
+            return out.filter(Boolean);
+        };
 
-        /** Rebuild the primary-select to only show currently linked collections. */
-        function syncPrimarySelect() {
-            const linked = getLinkedIds();
-            const current = primarySelect.value;
-            primarySelect.innerHTML =
-                '<option value="">This branch\'s own collection (default)</option>' +
-                linked
-                    .map(id => `<option value="${escapeHtml(id)}">${escapeHtml(truncate(id, 52))}</option>`)
-                    .join('');
-            // Restore prior selection if still available
-            if (linked.includes(current)) primarySelect.value = current;
-        }
+        const renderSelectionSummary = () => {
+            if (!selectionSummary) return;
 
-        for (const radio of root.querySelectorAll('.ss-bp-collection-row input[type="radio"]')) {
-            radio.addEventListener('change', syncPrimarySelect);
+            const linkedIds = getLinkedIds();
+            if (linkedIds.length === 0) {
+                selectionSummary.innerHTML = '<div class="ss-cm-empty">No collections selected.</div>';
+                return;
+            }
+
+            const zeroChunkIds = linkedIds.filter(id => optionsById.get(id)?.chunkCount === 0);
+            const rows = linkedIds.map(id => {
+                const option = optionsById.get(id);
+                const chunkCount = Number.isFinite(option?.chunkCount) ? Number(option.chunkCount) : null;
+                return `
+                    <div class="ss-bp-summary-row">
+                        <span class="ss-bp-summary-id" title="${escapeHtml(id)}">${escapeHtml(truncate(id, 62))}</span>
+                        <span class="ss-bp-summary-meta">${escapeHtml(
+                            chunkCount === null
+                                ? 'Chunk count unavailable'
+                                : `${chunkCount} chunk${chunkCount === 1 ? '' : 's'}`,
+                        )}</span>
+                    </div>
+                `;
+            }).join('');
+
+            selectionSummary.innerHTML = `
+                <div class="ss-bp-summary-card">
+                    <div class="ss-bp-summary-title">Selected Collections</div>
+                    <div class="ss-bp-summary-list">${rows}</div>
+                    ${zeroChunkIds.length > 0
+                        ? `
+                            <div class="ss-bp-summary-warning">
+                                <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+                                <span>${escapeHtml(`${zeroChunkIds.length} selected collection${zeroChunkIds.length === 1 ? '' : 's'} have zero chunks.`)}</span>
+                            </div>
+                        `
+                        : ''
+                    }
+                </div>
+            `;
+        };
+
+        const renderWriteTargetOptions = () => {
+            const linkedIds = getLinkedIds();
+            writeTargetSelect.disabled = linkedIds.length === 0;
+            writeTargetSelect.innerHTML = `
+                <option value="">Own collection (default)</option>
+                ${linkedIds.map(id => `<option value="${escapeHtml(id)}">${escapeHtml(truncate(id, 52))}</option>`).join('')}
+            `;
+            const desired = String(parentChatBinding?.writeTarget || '').trim();
+            if (desired && linkedIds.includes(desired)) {
+                writeTargetSelect.value = desired;
+            } else if (!linkedIds.includes(String(writeTargetSelect.value || '').trim())) {
+                writeTargetSelect.value = '';
+            }
+        };
+
+        for (const input of root.querySelectorAll('.ss-bp-link-check')) {
+            input.addEventListener('change', () => {
+                renderSelectionSummary();
+                renderWriteTargetOptions();
+            });
         }
 
         applyBtn?.addEventListener('click', () => {
             const linked = getLinkedIds();
-            if (linked.length === 0) {
-                // Nothing linked — treat as skip
+            const writeTarget = String(writeTargetSelect?.value || '').trim();
+
+            if (linked.length === 0 && !writeTarget) {
                 popup.complete(null);
                 return;
             }
 
-            const primaryCollection = primarySelect?.value || '';
-            const includeOwn = includeOwnCheck?.checked !== false;
-
             setChatBinding(normalizedBranch, {
                 collections: linked,
-                primaryCollection: primaryCollection || linked[0],
-                includeOwn,
+                writeTarget,
             }, ss);
 
+            if (!getChatBinding(normalizedBranch, ss)) {
+                setChatBinding(normalizedBranch, null, ss);
+            }
+
             saveSettings(settings);
-            toastr.success(
-                `Linked ${linked.length} collection${linked.length !== 1 ? 's' : ''} to this branch`
-            );
+            toastr.success('Branch collection settings applied');
             popup.complete(null);
         });
 
-        skipAllBtn?.addEventListener('click', () => {
-            popup.complete(null);
-        });
+        skipBtn?.addEventListener('click', () => popup.complete(null));
+        renderSelectionSummary();
+        renderWriteTargetOptions();
     });
 
     await showPromise;

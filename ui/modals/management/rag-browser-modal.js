@@ -9,6 +9,7 @@ import { showSsConfirm, showSsInput } from '../../common/modal-base.js';
 import {
     buildChunkHash,
     deleteChunks,
+    getActiveCollectionIds,
     getCollectionStats,
     getActiveCollectionId,
     getCollectionAlias,
@@ -285,9 +286,9 @@ function renderModalHtml(state) {
 
     return `
         <div class="ss-rag-modal ss-rag-browser-modal">
-            <h3 class="ss-rag-title">RAG Collection Browser</h3>
+            <h3 class="ss-rag-title">Collection Browser</h3>
             <p class="ss-hint ss-rag-inline-hint">
-                Browse and manage all vector collections exposed by the backend plugin.
+                Inspect collections across backends. Use Collection Manager to control what the current chat reads and where new vectors are written.
             </p>
 
             <div class="ss-rag-section">
@@ -314,6 +315,14 @@ function renderModalHtml(state) {
             </div>
 
             <div class="ss-rag-section">
+                <h4>Current Chat Usage</h4>
+                <p class="ss-hint ss-rag-inline-hint">
+                    Read-only summary of the active chat. Change reads and write target in Collection Manager.
+                </p>
+                <div id="ss-rag-browser-current-chat-summary" class="ss-rag-browser-summary-card"></div>
+            </div>
+
+            <div class="ss-rag-section">
                 <h4>Collection Details</h4>
                 <div class="ss-rag-browser-stat-card">
                     <div class="ss-rag-stat-info-grid">
@@ -330,7 +339,7 @@ function renderModalHtml(state) {
                             <span id="ss-rag-stat-chunks" class="ss-rag-stat-info-value">0</span>
                         </div>
                         <div class="ss-rag-stat-row">
-                            <span class="ss-rag-stat-info-label">Character / Chat</span>
+                            <span class="ss-rag-stat-info-label">Used by</span>
                             <span id="ss-rag-stat-character-chat" class="ss-rag-stat-info-value">N/A</span>
                         </div>
                         <div class="ss-rag-stat-row">
@@ -345,7 +354,7 @@ function renderModalHtml(state) {
                     <div class="ss-rag-browser-action-row">
                         <button id="ss-rag-browser-browse-btn" class="menu_button" type="button">Browse</button>
                         <button id="ss-rag-browser-rename-btn" class="menu_button" type="button">Rename</button>
-                        <button id="ss-rag-browser-link-btn" class="menu_button" type="button">Link/Unlink</button>
+                        <button id="ss-rag-browser-link-btn" class="menu_button" type="button">Add to chat</button>
                         <button id="ss-rag-browser-export-btn" class="menu_button" type="button">Export</button>
                         <button id="ss-rag-browser-import-btn" class="menu_button" type="button">Import</button>
                         <button id="ss-rag-browser-revectorize-btn" class="menu_button" type="button">Revectorize</button>
@@ -370,7 +379,7 @@ function renderModalHtml(state) {
                     <input id="ss-rag-browser-prev" class="menu_button" type="button" value="Previous Page" />
                     <input id="ss-rag-browser-next" class="menu_button" type="button" value="Next Page" />
                 </div>
-                <p id="ss-rag-browser-page-info" class="ss-hint ss-rag-inline-hint">Click "Browse Chunks" to load collection items.</p>
+                <p id="ss-rag-browser-page-info" class="ss-hint ss-rag-inline-hint">Click "Browse" to load collection items.</p>
                 <div id="ss-rag-browser-items" class="ss-rag-browser-items"></div>
             </div>
 
@@ -444,7 +453,7 @@ function clearChunkView(state, dom) {
     state.total = 0;
     renderChunkList(dom.items, []);
     if (dom.pageInfo) {
-        dom.pageInfo.textContent = 'Click "Browse Chunks" to load collection items.';
+        dom.pageInfo.textContent = 'Click "Browse" to load collection items.';
     }
     if (dom.prevBtn) dom.prevBtn.disabled = true;
     if (dom.nextBtn) dom.nextBtn.disabled = true;
@@ -547,11 +556,12 @@ function updateCollectionSelector(state, dom) {
  */
 function updateLinkButton(state, dom) {
     if (!dom.linkBtn) return;
-    let label = 'Link/Unlink';
+    let label = 'Add to chat';
     let enabled = false;
 
     const currentChatId = normalizeChatId(state.currentChatId);
-    const hasLink = !!(getCollectionAlias(state.currentChatId) || getCollectionIdOverride(state.currentChatId));
+    const binding = getChatBinding(state.currentChatId, extension_settings?.summary_sharder);
+    const isExplicitlyLinked = !!(binding?.collections || []).includes(state.collectionId);
 
     const isOwnCollection = state.collectionId && (
         state.collectionId === state.ownShardCollectionId ||
@@ -559,17 +569,89 @@ function updateLinkButton(state, dom) {
     );
 
     if (currentChatId) {
-        if (hasLink) {
-            label = 'Unlink';
+        if (isExplicitlyLinked) {
+            label = 'Remove from chat';
             enabled = true;
         } else if (state.collectionId && !isOwnCollection) {
-            label = 'Link';
+            label = 'Add to chat';
             enabled = true;
         }
     }
 
     dom.linkBtn.textContent = label;
     dom.linkBtn.disabled = !enabled;
+}
+
+/**
+ * @param {Object} state
+ * @param {string} collectionId
+ * @returns {number|null}
+ */
+function getKnownChunkCount(state, collectionId) {
+    const id = String(collectionId || '').trim();
+    if (!id) return null;
+    const match = (state.allCollections || []).find(item => item?.id === id) || null;
+    if (!match) return null;
+    return Number(match.chunkCount ?? 0) || 0;
+}
+
+/**
+ * @param {Object} state
+ * @param {Object} dom
+ */
+function updateCurrentChatUsageSummary(state, dom) {
+    if (!dom.currentChatSummary) return;
+
+    if (!state.currentChatId) {
+        dom.currentChatSummary.innerHTML = '<div class="ss-rag-browser-summary-empty">No active chat detected.</div>';
+        return;
+    }
+
+    const liveSettings = extension_settings?.summary_sharder;
+    const resolvedReadIds = getActiveCollectionIds(state.currentChatId, liveSettings);
+    const readIds = Array.isArray(resolvedReadIds)
+        ? resolvedReadIds
+        : [];
+    const writeTarget = String(getActiveCollectionId(state.currentChatId, liveSettings) || '').trim();
+    const selectedId = String(state.collectionId || '').trim();
+
+    const renderCollectionRow = (collectionId, extraBadge = '') => {
+        const chunkCount = getKnownChunkCount(state, collectionId);
+        const countLabel = chunkCount === null
+            ? 'count unavailable'
+            : `${chunkCount} chunk${chunkCount === 1 ? '' : 's'}`;
+        const selectedBadge = selectedId && selectedId === collectionId
+            ? '<span class="ss-rag-browser-summary-badge">selected</span>'
+            : '';
+        return `
+            <div class="ss-rag-browser-summary-row">
+                <div class="ss-rag-browser-summary-main">
+                    <span class="ss-rag-browser-summary-id" title="${escapeHtml(collectionId)}">${escapeHtml(truncate(collectionId, 82))}</span>
+                    <div class="ss-rag-browser-summary-badges">${selectedBadge}${extraBadge}</div>
+                </div>
+                <span class="ss-rag-browser-summary-meta">${escapeHtml(countLabel)}</span>
+            </div>
+        `;
+    };
+
+    const readsHtml = readIds.length > 0
+        ? readIds.map(id => renderCollectionRow(id)).join('')
+        : '<div class="ss-rag-browser-summary-empty">No active read collections.</div>';
+
+    const writeTargetHtml = writeTarget
+        ? renderCollectionRow(writeTarget, '<span class="ss-rag-browser-summary-badge">write target</span>')
+        : '<div class="ss-rag-browser-summary-empty">No write target resolved.</div>';
+
+    dom.currentChatSummary.innerHTML = `
+        <div class="ss-rag-browser-summary-section">
+            <div class="ss-rag-browser-summary-label">Reads</div>
+            <div class="ss-rag-browser-summary-list">${readsHtml}</div>
+        </div>
+        <div class="ss-rag-browser-summary-section">
+            <div class="ss-rag-browser-summary-label">Write Target</div>
+            <div class="ss-rag-browser-summary-list">${writeTargetHtml}</div>
+        </div>
+    `;
 }
 
 /**
@@ -589,11 +671,9 @@ function updateCollectionHint(state, dom) {
         return;
     }
 
-    const override = getCollectionIdOverride(state.currentChatId);
-    if (override) {
-        dom.chatHint.textContent = override === state.collectionId
-            ? 'Current chat is linked to this collection.'
-            : `Current chat is linked to: ${override}`;
+    const binding = getChatBinding(state.currentChatId, extension_settings?.summary_sharder);
+    if ((binding?.collections || []).includes(state.collectionId)) {
+        dom.chatHint.textContent = 'This collection is currently added to the active chat. Use Collection Manager to review the full read/write configuration.';
         return;
     }
 
@@ -609,11 +689,11 @@ function updateCollectionHint(state, dom) {
     );
 
     if (isOwnCollection) {
-        dom.chatHint.textContent = 'This collection belongs to the current chat.';
+        dom.chatHint.textContent = 'This is the active chat\'s own collection. Use Collection Manager to review or change the full read/write configuration.';
         return;
     }
 
-    dom.chatHint.textContent = 'Use Link to apply this collection to the current chat.';
+    dom.chatHint.textContent = 'Use Add to chat as a shortcut. Use Collection Manager for the authoritative current-chat read/write setup.';
 }
 
 /**
@@ -642,8 +722,8 @@ function getChatsLinkedToCollection(state, collectionId) {
     // New binding system: check collectionBindings.chats
     const chatBindings = ss?.collectionBindings?.chats || {};
     for (const [chatId, binding] of Object.entries(chatBindings)) {
-        if (!Array.isArray(binding?.collections)) continue;
-        if (!binding.collections.includes(collectionId)) continue;
+        if (!Array.isArray(binding?.collections) && !binding?.writeTarget) continue;
+        if (!binding.collections?.includes(collectionId) && binding?.writeTarget !== collectionId) continue;
         if (seen.has(chatId)) continue;
         seen.add(chatId);
         const displayName = displayNameMap.get(chatId) || chatId;
@@ -704,6 +784,7 @@ function updateStatCard(state, dom) {
     if (dom.statBackend) dom.statBackend.textContent = backend;
 
     updateLinkButton(state, dom);
+    updateCurrentChatUsageSummary(state, dom);
     updateCollectionHint(state, dom);
 }
 
@@ -1770,28 +1851,40 @@ async function handleLinkToggle(state, settings, dom) {
     const existingBinding = getChatBinding(state.currentChatId, ss);
     const currentAlias = getCollectionAlias(state.currentChatId);
     const currentOverride = getCollectionIdOverride(state.currentChatId);
-    const hasAnyLink = existingBinding || currentAlias || currentOverride;
+    if (!state.collectionId) {
+        toastr.warning('Select a collection first');
+        return;
+    }
 
-    if (hasAnyLink) {
-        // Clear all link mechanisms
-        setChatBinding(state.currentChatId, null, ss);
+    const nextCollections = Array.isArray(existingBinding?.collections)
+        ? [...existingBinding.collections]
+        : [];
+    const currentIndex = nextCollections.indexOf(state.collectionId);
+
+    if (currentIndex >= 0) {
+        nextCollections.splice(currentIndex, 1);
+        const nextWriteTarget = existingBinding?.writeTarget === state.collectionId ? '' : (existingBinding?.writeTarget || '');
+        setChatBinding(state.currentChatId, {
+            collections: nextCollections,
+            writeTarget: nextWriteTarget,
+        }, ss);
+        if (!getChatBinding(state.currentChatId, ss)) {
+            setChatBinding(state.currentChatId, null, ss);
+        }
         if (currentAlias) setCollectionAlias(state.currentChatId, null);
         if (currentOverride) setCollectionIdOverride(state.currentChatId, null);
         saveSettings(settings);
-        toastr.success('Collection link removed');
+        toastr.success('Collection removed from chat bindings');
     } else {
-        if (!state.collectionId) {
-            toastr.warning('Select a collection first');
-            return;
-        }
-        // Write through the new binding system (single collection, no includeOwn)
+        nextCollections.push(state.collectionId);
         setChatBinding(state.currentChatId, {
-            collections: [state.collectionId],
-            primaryCollection: state.collectionId,
-            includeOwn: false,
+            collections: nextCollections,
+            writeTarget: existingBinding?.writeTarget || '',
         }, ss);
+        if (currentAlias) setCollectionAlias(state.currentChatId, null);
+        if (currentOverride) setCollectionIdOverride(state.currentChatId, null);
         saveSettings(settings);
-        toastr.success('Collection linked to current chat');
+        toastr.success('Collection added to chat bindings');
     }
 
     updateStatCard(state, dom);
@@ -2023,6 +2116,7 @@ export async function openRagBrowserModal(settings) {
             collectionSearch: document.getElementById('ss-rag-browser-collection-search'),
             collectionOptions: document.getElementById('ss-rag-browser-collection-options'),
             chatHint: document.getElementById('ss-rag-browser-chat-hint'),
+            currentChatSummary: document.getElementById('ss-rag-browser-current-chat-summary'),
             statCollection: document.getElementById('ss-rag-stat-collection'),
             statMode: document.getElementById('ss-rag-stat-mode'),
             statChunks: document.getElementById('ss-rag-stat-chunks'),
@@ -2344,6 +2438,9 @@ export async function openRagBrowserModal(settings) {
         }
         if (dom.chatHint) {
             dom.chatHint.textContent = 'Loading collection metadata...';
+        }
+        if (dom.currentChatSummary) {
+            dom.currentChatSummary.innerHTML = '<div class="ss-rag-browser-summary-empty">Loading current chat usage...</div>';
         }
         clearChunkView(state, dom);
 

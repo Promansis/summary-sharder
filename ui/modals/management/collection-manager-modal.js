@@ -1,12 +1,6 @@
 /**
  * Collection Manager Modal
- * UI for assigning multiple collections to characters and chats.
- *
- * Architecture:
- *  - Character tab: bind extra collections to every chat with this character.
- *  - Chat tab: bind extra collections for this specific chat, overriding character-level.
- *    The chat tab shows character-level bindings as grayed-out "inherited" rows so the
- *    user knows what they would be replacing.
+ * Overview-first UI for additive collection reads and explicit write targets.
  */
 
 import { Popup, POPUP_TYPE } from '../../../../../../popup.js';
@@ -15,16 +9,14 @@ import { extension_settings } from '../../../../../../extensions.js';
 import {
     getCharacterBinding,
     getChatBinding,
+    getShardCollectionId,
+    getStandardCollectionId,
+    listAllCollections,
     setCharacterBinding,
     setChatBinding,
-    listAllCollections,
 } from '../../../core/rag/index.js';
 import { saveSettings } from '../../../core/settings.js';
 import { ragLog } from '../../../core/logger.js';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function escapeHtml(text) {
     return String(text || '')
@@ -37,183 +29,216 @@ function escapeHtml(text) {
 
 function truncate(text, max = 60) {
     const v = String(text || '').trim();
-    return v.length > max ? `${v.slice(0, max - 1)}\u2026` : v;
+    return v.length > max ? `${v.slice(0, max - 1)}...` : v;
 }
 
 function normalizeChatId(chatId) {
     return String(chatId || '').trim().replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
 }
 
-// ---------------------------------------------------------------------------
-// Row renderers
-// ---------------------------------------------------------------------------
+function dedupe(values) {
+    return [...new Set((Array.isArray(values) ? values : []).map(v => String(v || '').trim()).filter(Boolean))];
+}
 
-/**
- * Render an editable collection row (with primary radio + remove button).
- */
-function renderCollectionRow(collectionId, primaryCollection, chunkCount, radioGroup) {
-    const isPrimary = collectionId === primaryCollection;
+function getDraftState(charDraft, chatDraft, ownCollectionId) {
+    const characterCollections = dedupe(charDraft.collections);
+    const chatCollections = dedupe(chatDraft.collections);
+    const effectiveReadIds = dedupe([...characterCollections, ...chatCollections, ownCollectionId || '']);
+
+    const sourceMap = {};
+    for (const id of characterCollections) {
+        if (!sourceMap[id]) sourceMap[id] = [];
+        sourceMap[id].push('character');
+    }
+    for (const id of chatCollections) {
+        if (!sourceMap[id]) sourceMap[id] = [];
+        if (!sourceMap[id].includes('chat')) sourceMap[id].push('chat');
+    }
+    if (ownCollectionId) {
+        if (!sourceMap[ownCollectionId]) sourceMap[ownCollectionId] = [];
+        if (!sourceMap[ownCollectionId].includes('own')) sourceMap[ownCollectionId].push('own');
+    }
+
+    const duplicateIds = Object.entries(sourceMap)
+        .filter(([, sources]) => sources.includes('character') && sources.includes('chat'))
+        .map(([id]) => id);
+
+    const validTargets = new Set(effectiveReadIds);
+    let effectiveWriteTarget = ownCollectionId || '';
+    let effectiveWriteSource = ownCollectionId ? 'own' : '';
+
+    if (chatDraft.writeTarget && validTargets.has(chatDraft.writeTarget)) {
+        effectiveWriteTarget = chatDraft.writeTarget;
+        effectiveWriteSource = 'chat';
+    } else if (charDraft.writeTarget && validTargets.has(charDraft.writeTarget)) {
+        effectiveWriteTarget = charDraft.writeTarget;
+        effectiveWriteSource = 'character';
+    } else if (!effectiveWriteTarget && effectiveReadIds.length > 0) {
+        effectiveWriteTarget = effectiveReadIds[0];
+        effectiveWriteSource = sourceMap[effectiveWriteTarget]?.[0] || '';
+    }
+
+    const staleIds = dedupe([
+        ...characterCollections,
+        ...chatCollections,
+        charDraft.writeTarget,
+        chatDraft.writeTarget,
+    ]);
+
+    return {
+        characterCollections,
+        chatCollections,
+        effectiveReadIds,
+        sourceMap,
+        duplicateIds,
+        effectiveWriteTarget,
+        effectiveWriteSource,
+        staleIds,
+    };
+}
+
+function getWriteScopeLabel(source) {
+    if (source === 'chat') return 'Chat collection';
+    if (source === 'character') return 'Character collection';
+    return 'Own collection';
+}
+
+function renderSourceBadges(sources) {
+    const order = ['character', 'chat', 'own'];
+    return order
+        .filter(source => Array.isArray(sources) && sources.includes(source))
+        .map(source => `<span class="ss-cm-source-badge ss-cm-source-${source}">${escapeHtml(source)}</span>`)
+        .join('');
+}
+
+function renderEditableRow(collectionId, chunkCount, extraBadges = '') {
     const chunksText = typeof chunkCount === 'number' ? `${chunkCount} chunks` : '';
     return `
         <div class="ss-cm-row" data-collection-id="${escapeHtml(collectionId)}">
-            <label class="ss-cm-primary-label" title="Set as primary (new vectors are written here)">
-                <input type="radio"
-                    name="${escapeHtml(radioGroup)}"
-                    value="${escapeHtml(collectionId)}"
-                    class="ss-cm-primary-radio"
-                    ${isPrimary ? 'checked' : ''} />
-                Primary
-            </label>
-            <span class="ss-cm-row-id" title="${escapeHtml(collectionId)}">${escapeHtml(truncate(collectionId))}</span>
+            <div class="ss-cm-row-main">
+                <span class="ss-cm-row-id" title="${escapeHtml(collectionId)}">${escapeHtml(truncate(collectionId, 70))}</span>
+                <div class="ss-cm-row-badges">${extraBadges}</div>
+            </div>
             <span class="ss-cm-row-chunks">${escapeHtml(chunksText)}</span>
-            <button class="ss-cm-row-remove menu_button" type="button" title="Remove this binding">&times;</button>
+            <button class="ss-cm-row-remove menu_button" type="button" title="Remove this collection">&times;</button>
         </div>
     `;
 }
 
-/**
- * Render a read-only "inherited" collection row (grayed out, from character level).
- */
-function renderInheritedRow(collectionId, chunkCount, isPrimary) {
+function renderOverviewReadRow(collectionId, chunkCount, sources) {
     const chunksText = typeof chunkCount === 'number' ? `${chunkCount} chunks` : '';
-    const primaryBadge = isPrimary ? '<span class="ss-cm-inherited-primary-badge">primary</span>' : '';
+    const badges = [renderSourceBadges(sources)];
+    if (chunkCount === 0) {
+        badges.push('<span class="ss-cm-source-badge ss-cm-source-warning">0 chunks</span>');
+    }
     return `
-        <div class="ss-cm-row ss-cm-inherited-row" title="Inherited from character-level binding (read-only)">
-            <span class="ss-cm-inherited-badge">inherited</span>
-            <span class="ss-cm-row-id" title="${escapeHtml(collectionId)}">${escapeHtml(truncate(collectionId))}</span>
-            <span class="ss-cm-row-chunks">${escapeHtml(chunksText)} ${primaryBadge}</span>
+        <div class="ss-cm-overview-row">
+            <div class="ss-cm-overview-main">
+                <span class="ss-cm-row-id" title="${escapeHtml(collectionId)}">${escapeHtml(truncate(collectionId, 76))}</span>
+                <div class="ss-cm-row-badges">${badges.join('')}</div>
+            </div>
+            <span class="ss-cm-row-chunks">${escapeHtml(chunksText)}</span>
         </div>
     `;
 }
-
-function renderEmptyList(message) {
-    return `<div class="ss-cm-empty">${escapeHtml(message)}</div>`;
-}
-
-// ---------------------------------------------------------------------------
-// Modal HTML
-// ---------------------------------------------------------------------------
 
 function buildModalHtml(ctx) {
     const {
-        charName, charAvatar, currentChatId, isSharder,
-        charBinding,  // existing character-level binding (or null)
+        charName,
+        charAvatar,
+        currentChatId,
+        isSharder,
+        ownCollectionId,
     } = ctx;
     const modeClass = isSharder ? 'ss-rag-mode-sharder' : 'ss-rag-mode-standard';
     const modeLabel = isSharder ? 'Sharder' : 'Standard';
-    const hasChar = !!charName;
-    const hasChat = !!currentChatId;
-
-    // Always render the inherited section container so updateChatInheritedDisplay()
-    // can populate it dynamically — even when there are no bindings at modal open.
-    const inheritedSectionHtml = hasChar
-        ? `<div class="ss-cm-inherited-section">
-                <div class="ss-cm-section-header">
-                    <div class="ss-cm-list-label">
-                        <i class="fa-solid fa-user ss-cm-section-icon"></i>
-                        Character-level (inherited)
-                    </div>
-                    <button id="ss-cm-copy-inherited-btn" class="menu_button ss-cm-copy-btn" type="button"
-                        title="Copy these into the chat-level binding so you can customise them"
-                        style="display:none">
-                        <i class="fa-solid fa-copy"></i> Copy to chat
-                    </button>
-                </div>
-                <div id="ss-cm-char-inherited-list" class="ss-cm-list ss-cm-inherited-list"></div>
-                <p class="ss-hint ss-rag-inline-hint ss-cm-inherited-hint">
-                    Active when no chat-level collections are set.
-                    Adding chat-level collections below will override these.
-                </p>
-           </div>`
-        : '';
 
     return `
         <div class="ss-collection-manager-modal">
             <h3 class="ss-rag-title">
-                Collection Bindings
+                Collection Manager
                 <span class="ss-rag-mode-badge ${modeClass}">${escapeHtml(modeLabel)}</span>
             </h3>
 
-            <div class="ss-cm-tabs">
-                <button type="button" class="ss-cm-tab active" data-cm-tab="character">
-                    <i class="fa-solid fa-user"></i> Character
-                </button>
-                <button type="button" class="ss-cm-tab" data-cm-tab="chat">
-                    <i class="fa-solid fa-comment"></i> Chat
-                </button>
-            </div>
-
-            <!-- Character panel -->
-            <div class="ss-cm-panel active" data-cm-panel="character">
-                ${hasChar
-                    ? `<div class="ss-cm-context-row">
-                            ${charAvatar ? `<img class="ss-cm-context-avatar" src="${escapeHtml(charAvatar)}" alt="" />` : ''}
-                            <span class="ss-cm-context-name">${escapeHtml(charName)}</span>
-                        </div>`
-                    : `<p class="ss-hint ss-rag-inline-hint">No character active. Open a chat to manage character bindings.</p>`
-                }
-                <p class="ss-hint ss-rag-inline-hint">Collections here apply to every chat with this character, unless overridden per-chat.</p>
-                <div class="ss-cm-list-label">Linked Collections</div>
-                <div id="ss-cm-char-list" class="ss-cm-list"></div>
-                ${hasChar
-                    ? `<div class="ss-cm-add-row">
-                            <select id="ss-cm-char-add-select" class="text_pole ss-cm-add-select">
-                                <option value="">Add a collection&hellip;</option>
-                            </select>
-                            <button id="ss-cm-char-add-btn" class="menu_button" type="button">Add</button>
-                        </div>`
-                    : ''
-                }
-            </div>
-
-            <!-- Chat panel -->
-            <div class="ss-cm-panel" data-cm-panel="chat">
-                ${hasChat
-                    ? `<div class="ss-cm-context-row">
-                            <i class="fa-solid fa-comment ss-cm-chat-icon"></i>
-                            <span class="ss-cm-context-name">${escapeHtml(currentChatId)}</span>
-                        </div>`
-                    : `<p class="ss-hint ss-rag-inline-hint">No chat active.</p>`
-                }
-
-                ${inheritedSectionHtml}
-
-                <div class="ss-cm-section-header">
-                    <div class="ss-cm-list-label">
-                        <i class="fa-solid fa-comment-dots ss-cm-section-icon"></i>
-                        Chat-level (overrides character)
+            <div class="ss-cm-context-grid">
+                <div class="ss-cm-context-card">
+                    <div class="ss-cm-context-label">Character</div>
+                    <div class="ss-cm-context-row">
+                        ${charAvatar ? `<img class="ss-cm-context-avatar" src="${escapeHtml(charAvatar)}" alt="" />` : ''}
+                        <span class="ss-cm-context-name">${escapeHtml(charName || 'No active character')}</span>
                     </div>
                 </div>
-                <p class="ss-hint ss-rag-inline-hint">Chat-level bindings replace character-level bindings for this chat only.</p>
-                <div id="ss-cm-chat-list" class="ss-cm-list"></div>
-                ${hasChat
-                    ? `<div class="ss-cm-add-row">
-                            <select id="ss-cm-chat-add-select" class="text_pole ss-cm-add-select">
-                                <option value="">Add a collection&hellip;</option>
-                            </select>
-                            <button id="ss-cm-chat-add-btn" class="menu_button" type="button">Add</button>
-                        </div>`
-                    : ''
-                }
+                <div class="ss-cm-context-card">
+                    <div class="ss-cm-context-label">Chat</div>
+                    <div class="ss-cm-context-row">
+                        <i class="fa-solid fa-comment ss-cm-chat-icon"></i>
+                        <span class="ss-cm-context-name">${escapeHtml(currentChatId || 'No active chat')}</span>
+                    </div>
+                </div>
             </div>
+
+            <div class="ss-cm-overview-card">
+                <div class="ss-cm-section-title">Effective Behavior</div>
+                <p class="ss-hint ss-rag-inline-hint">Current read and write behavior for this chat.</p>
+                <div class="ss-cm-overview-block">
+                    <div class="ss-cm-section-title">Reads</div>
+                    <div id="ss-cm-overview-reads" class="ss-cm-list"></div>
+                </div>
+                <div class="ss-cm-overview-block">
+                    <div class="ss-cm-section-title">Write Target</div>
+                    <div id="ss-cm-overview-write" class="ss-cm-write-target"></div>
+                    <select id="ss-cm-overview-write-select" class="text_pole ss-cm-add-select ss-cm-write-target-select"></select>
+                    <p id="ss-cm-overview-write-hint" class="ss-hint ss-rag-inline-hint"></p>
+                </div>
+                <div class="ss-cm-overview-block">
+                    <div class="ss-cm-section-title">Warnings</div>
+                    <div id="ss-cm-overview-warnings" class="ss-cm-list"></div>
+                </div>
+            </div>
+
+            <details class="ss-cm-accordion">
+                <summary class="ss-cm-accordion-summary">
+                    <span>Character Collections</span>
+                    <span class="ss-cm-accordion-hint ss-hint">Shared reads for this character</span>
+                </summary>
+                <div class="ss-cm-accordion-body">
+                    <div id="ss-cm-char-list" class="ss-cm-list"></div>
+                    <div class="ss-cm-add-row">
+                        <select id="ss-cm-char-add-select" class="text_pole ss-cm-add-select">
+                            <option value="">Select a collection...</option>
+                        </select>
+                        <button id="ss-cm-char-add-btn" class="menu_button" type="button">Add</button>
+                    </div>
+                </div>
+            </details>
+
+            <details class="ss-cm-accordion">
+                <summary class="ss-cm-accordion-summary">
+                    <span>Chat Collections</span>
+                    <span class="ss-cm-accordion-hint ss-hint">Extra reads for this chat</span>
+                </summary>
+                <div class="ss-cm-accordion-body">
+                    <div id="ss-cm-chat-list" class="ss-cm-list"></div>
+                    <div class="ss-cm-add-row">
+                        <select id="ss-cm-chat-add-select" class="text_pole ss-cm-add-select">
+                            <option value="">Select a collection...</option>
+                        </select>
+                        <button id="ss-cm-chat-add-btn" class="menu_button" type="button">Add</button>
+                    </div>
+                </div>
+            </details>
 
             <div class="ss-cm-footer">
                 <button id="ss-cm-save" class="menu_button" type="button">
-                    <i class="fa-solid fa-floppy-disk"></i> Save Changes
+                    <i class="fa-solid fa-floppy-disk"></i> Save
                 </button>
             </div>
+
+            <input type="hidden" id="ss-cm-own-collection" value="${escapeHtml(ownCollectionId || '')}" />
         </div>
     `;
 }
 
-// ---------------------------------------------------------------------------
-// Modal entry point
-// ---------------------------------------------------------------------------
-
-/**
- * Open the Collection Manager modal.
- * @param {Object} settings - Extension settings (extension_settings.summary_sharder)
- */
 export async function openCollectionManagerModal(settings) {
     const ctx = SillyTavern.getContext();
     const charIdx = ctx?.characterId;
@@ -223,29 +248,29 @@ export async function openCollectionManagerModal(settings) {
     const charAvatarKey = char?.avatar ?? null;
     const currentChatId = normalizeChatId(ctx?.chatId ?? '');
     const isSharder = settings?.sharderMode === true;
+    const ownCollectionId = currentChatId
+        ? (isSharder ? getShardCollectionId(currentChatId) : getStandardCollectionId(currentChatId))
+        : '';
 
-    // Load existing bindings into editable drafts
     const ss = extension_settings?.summary_sharder;
     const existingCharBinding = charAvatarKey ? getCharacterBinding(charAvatarKey, ss) : null;
     const existingChatBinding = currentChatId ? getChatBinding(currentChatId, ss) : null;
 
     const charDraft = {
         collections: existingCharBinding ? [...existingCharBinding.collections] : [],
-        primaryCollection: existingCharBinding?.primaryCollection ?? '',
+        writeTarget: existingCharBinding?.writeTarget ?? '',
     };
     const chatDraft = {
         collections: existingChatBinding ? [...existingChatBinding.collections] : [],
-        primaryCollection: existingChatBinding?.primaryCollection ?? '',
+        writeTarget: existingChatBinding?.writeTarget ?? '',
     };
 
-    // Fetch all available collections from the backend
     let allCollections = [];
     const rag = isSharder ? settings?.rag : settings?.ragStandard;
     const currentBackend = String(rag?.backend || 'vectra').toLowerCase();
 
     try {
         const fetched = await listAllCollections(currentBackend);
-        // Filter to only collections from current backend (in case plugin returns cross-backend results)
         allCollections = Array.isArray(fetched)
             ? fetched.filter(c => String(c.backend || 'vectra').toLowerCase() === currentBackend)
             : [];
@@ -254,15 +279,15 @@ export async function openCollectionManagerModal(settings) {
     }
 
     const chunkCountMap = new Map(allCollections.map(c => [String(c.id), c.chunkCount ?? 0]));
+    const knownCollections = new Set(allCollections.map(c => String(c.id)));
 
-    // Build and show modal
     const popup = new Popup(
         buildModalHtml({
             charName,
             charAvatar,
             currentChatId,
             isSharder,
-            charBinding: existingCharBinding,
+            ownCollectionId,
         }),
         POPUP_TYPE.TEXT,
         null,
@@ -274,49 +299,106 @@ export async function openCollectionManagerModal(settings) {
         const root = document.querySelector('.ss-collection-manager-modal');
         if (!root) return;
 
-        // ── Tab switching ────────────────────────────────────────────────────
-        function switchTab(tabId) {
-            for (const t of root.querySelectorAll('.ss-cm-tab')) {
-                t.classList.toggle('active', t.getAttribute('data-cm-tab') === tabId);
-            }
-            for (const p of root.querySelectorAll('.ss-cm-panel')) {
-                p.classList.toggle('active', p.getAttribute('data-cm-panel') === tabId);
-            }
-        }
-        for (const tab of root.querySelectorAll('.ss-cm-tab')) {
-            tab.addEventListener('click', () => switchTab(tab.getAttribute('data-cm-tab')));
-        }
+        const charList = root.querySelector('#ss-cm-char-list');
+        const chatList = root.querySelector('#ss-cm-chat-list');
+        const charAddSelect = root.querySelector('#ss-cm-char-add-select');
+        const chatAddSelect = root.querySelector('#ss-cm-chat-add-select');
+        const overviewReads = root.querySelector('#ss-cm-overview-reads');
+        const overviewWrite = root.querySelector('#ss-cm-overview-write');
+        const overviewWriteSelect = root.querySelector('#ss-cm-overview-write-select');
+        const overviewWriteHint = root.querySelector('#ss-cm-overview-write-hint');
+        const overviewWarnings = root.querySelector('#ss-cm-overview-warnings');
+        const saveBtn = root.querySelector('#ss-cm-save');
 
-        // ── Helper: Update inherited display in Chat tab when char draft changes ──
-        const updateChatInheritedDisplay = () => {
-            const inheritedList = root.querySelector('#ss-cm-char-inherited-list');
-            const copyBtn = root.querySelector('#ss-cm-copy-inherited-btn');
-            if (!inheritedList) return;
+        const getCollectionBadges = (id, scope) => {
+            const badges = [];
+            if ((scope === 'character' && chatDraft.collections.includes(id)) || (scope === 'chat' && charDraft.collections.includes(id))) {
+                badges.push('<span class="ss-cm-source-badge ss-cm-source-warning">duplicate</span>');
+            }
+            if (!knownCollections.has(String(id))) {
+                badges.push('<span class="ss-cm-source-badge ss-cm-source-warning">missing</span>');
+            }
+            if (chunkCountMap.has(String(id)) && Number(chunkCountMap.get(String(id))) === 0) {
+                badges.push('<span class="ss-cm-source-badge ss-cm-source-warning">0 chunks</span>');
+            }
+            return badges.join('');
+        };
 
-            if (charDraft.collections.length === 0) {
-                inheritedList.innerHTML = '<div class="ss-cm-empty">No character-level collections. Add some in the Character tab.</div>';
-                if (copyBtn) copyBtn.style.display = 'none';
-            } else {
-                inheritedList.innerHTML = charDraft.collections
-                    .map(id => renderInheritedRow(id, chunkCountMap.get(id), id === charDraft.primaryCollection))
-                    .join('');
-                if (copyBtn) copyBtn.style.display = '';
+        const getInheritedWriteTarget = () => getDraftState(charDraft, { ...chatDraft, writeTarget: '' }, ownCollectionId);
+        const applyWriteTargetSelection = (selectedId) => {
+            const selected = String(selectedId || '').trim();
+            const state = getDraftState(charDraft, chatDraft, ownCollectionId);
+            if (!selected || !state.effectiveReadIds.includes(selected)) {
+                return;
+            }
+
+            const sources = state.sourceMap[selected] || [];
+            if (sources.includes('character') && selected !== ownCollectionId) {
+                charDraft.writeTarget = selected;
+                chatDraft.writeTarget = '';
+                return;
+            }
+
+            if (selected === ownCollectionId && !String(charDraft.writeTarget || '').trim()) {
+                chatDraft.writeTarget = '';
+                return;
+            }
+
+            chatDraft.writeTarget = selected;
+        };
+
+        const coerceValidWriteTargets = () => {
+            const state = getDraftState(charDraft, chatDraft, ownCollectionId);
+            const charOptions = new Set(charDraft.collections);
+            if (charDraft.writeTarget && charDraft.writeTarget !== ownCollectionId && !charOptions.has(charDraft.writeTarget)) {
+                charDraft.writeTarget = '';
+            }
+
+            const chatOptions = new Set(state.effectiveReadIds);
+            if (chatDraft.writeTarget && !chatOptions.has(chatDraft.writeTarget)) {
+                chatDraft.writeTarget = '';
             }
         };
 
-        // ── Character panel ──────────────────────────────────────────────────
-        const charList = root.querySelector('#ss-cm-char-list');
-        const charAddSelect = root.querySelector('#ss-cm-char-add-select');
-        const charAddBtn = root.querySelector('#ss-cm-char-add-btn');
+        const renderCharAddSelect = () => {
+            if (!charAddSelect) return;
+            const bound = new Set(charDraft.collections);
+            const options = allCollections.filter(c => !bound.has(String(c.id)));
+            charAddSelect.innerHTML = '<option value="">Select a collection...</option>'
+                + options.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(truncate(c.id, 56))} (${c.chunkCount ?? 0})</option>`).join('');
+        };
 
-        function renderCharList() {
+        const renderChatAddSelect = () => {
+            if (!chatAddSelect) return;
+            const bound = new Set(chatDraft.collections);
+            const options = allCollections.filter(c => !bound.has(String(c.id)));
+            chatAddSelect.innerHTML = '<option value="">Select a collection...</option>'
+                + options.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(truncate(c.id, 56))} (${c.chunkCount ?? 0})</option>`).join('');
+        };
+
+        const renderOverviewWriteSelect = (state) => {
+            if (!overviewWriteSelect) return;
+            overviewWriteSelect.innerHTML = state.effectiveReadIds
+                .map(id => {
+                    const sources = state.sourceMap[id] || [];
+                    const sourceLabel = sources.length > 0 ? ` [${sources.join(' + ')}]` : '';
+                    const count = chunkCountMap.has(String(id)) ? ` (${Number(chunkCountMap.get(String(id))) || 0})` : '';
+                    const label = `${truncate(id, 58)}${sourceLabel}${count}`;
+                    return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
+                })
+                .join('');
+            overviewWriteSelect.value = state.effectiveWriteTarget || '';
+        };
+
+        const renderCharList = () => {
             if (!charList) return;
             if (charDraft.collections.length === 0) {
-                charList.innerHTML = renderEmptyList('No collections linked to this character. Add one below.');
+                charList.innerHTML = '<div class="ss-cm-empty">No shared character collections yet.</div>';
                 return;
             }
+
             charList.innerHTML = charDraft.collections
-                .map(id => renderCollectionRow(id, charDraft.primaryCollection, chunkCountMap.get(id), 'ss-cm-char-primary'))
+                .map(id => renderEditableRow(id, chunkCountMap.get(id), getCollectionBadges(id, 'character')))
                 .join('');
 
             for (const btn of charList.querySelectorAll('.ss-cm-row-remove')) {
@@ -324,57 +406,22 @@ export async function openCollectionManagerModal(settings) {
                     const id = btn.closest('.ss-cm-row')?.getAttribute('data-collection-id');
                     if (!id) return;
                     charDraft.collections = charDraft.collections.filter(c => c !== id);
-                    if (charDraft.primaryCollection === id) {
-                        charDraft.primaryCollection = charDraft.collections[0] ?? '';
-                    }
-                    renderCharList();
-                    renderCharAddSelect();
-                    updateChatInheritedDisplay();  // Update Chat tab in real-time
+                    if (charDraft.writeTarget === id) charDraft.writeTarget = '';
+                    coerceValidWriteTargets();
+                    renderAll();
                 });
             }
-            for (const radio of charList.querySelectorAll('.ss-cm-primary-radio')) {
-                radio.addEventListener('change', () => {
-                    if (radio.checked) {
-                        charDraft.primaryCollection = radio.value;
-                        updateChatInheritedDisplay();
-                    }
-                });
-            }
-        }
+        };
 
-        function renderCharAddSelect() {
-            if (!charAddSelect) return;
-            const bound = new Set(charDraft.collections);
-            const options = allCollections.filter(c => !bound.has(c.id));
-            charAddSelect.innerHTML = '<option value="">Add a collection\u2026</option>'
-                + options.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(truncate(c.id, 52))} (${c.chunkCount ?? 0})</option>`).join('');
-        }
-
-        charAddBtn?.addEventListener('click', () => {
-            const id = charAddSelect?.value;
-            if (!id || charDraft.collections.includes(id)) return;
-            charDraft.collections.push(id);
-            if (!charDraft.primaryCollection) charDraft.primaryCollection = id;
-            if (charAddSelect) charAddSelect.value = '';
-            renderCharList();
-            renderCharAddSelect();
-            updateChatInheritedDisplay();  // Update Chat tab in real-time
-        });
-
-        // ── Chat panel ───────────────────────────────────────────────────────
-        const chatList = root.querySelector('#ss-cm-chat-list');
-        const chatAddSelect = root.querySelector('#ss-cm-chat-add-select');
-        const chatAddBtn = root.querySelector('#ss-cm-chat-add-btn');
-        const copyInheritedBtn = root.querySelector('#ss-cm-copy-inherited-btn');
-
-        function renderChatList() {
+        const renderChatList = () => {
             if (!chatList) return;
             if (chatDraft.collections.length === 0) {
-                chatList.innerHTML = renderEmptyList('No chat-level collections. Add one below, or keep empty to use character-level bindings.');
+                chatList.innerHTML = '<div class="ss-cm-empty">No chat-only collections yet. Character collections remain active even when this list is empty.</div>';
                 return;
             }
+
             chatList.innerHTML = chatDraft.collections
-                .map(id => renderCollectionRow(id, chatDraft.primaryCollection, chunkCountMap.get(id), 'ss-cm-chat-primary'))
+                .map(id => renderEditableRow(id, chunkCountMap.get(id), getCollectionBadges(id, 'chat')))
                 .join('');
 
             for (const btn of chatList.querySelectorAll('.ss-cm-row-remove')) {
@@ -382,96 +429,134 @@ export async function openCollectionManagerModal(settings) {
                     const id = btn.closest('.ss-cm-row')?.getAttribute('data-collection-id');
                     if (!id) return;
                     chatDraft.collections = chatDraft.collections.filter(c => c !== id);
-                    if (chatDraft.primaryCollection === id) {
-                        chatDraft.primaryCollection = chatDraft.collections[0] ?? '';
-                    }
-                    renderChatList();
-                    renderChatAddSelect();
+                    if (chatDraft.writeTarget === id) chatDraft.writeTarget = '';
+                    coerceValidWriteTargets();
+                    renderAll();
                 });
             }
-            for (const radio of chatList.querySelectorAll('.ss-cm-primary-radio')) {
-                radio.addEventListener('change', () => {
-                    if (radio.checked) chatDraft.primaryCollection = radio.value;
-                });
+        };
+
+        const renderOverview = () => {
+            const state = getDraftState(charDraft, chatDraft, ownCollectionId);
+            const missingIds = state.staleIds.filter(id => id && id !== ownCollectionId && !knownCollections.has(id));
+            const zeroChunkIds = state.effectiveReadIds.filter(id => chunkCountMap.has(String(id)) && Number(chunkCountMap.get(String(id))) === 0);
+
+            if (overviewReads) {
+                overviewReads.innerHTML = state.effectiveReadIds
+                    .map(id => renderOverviewReadRow(id, chunkCountMap.get(id), state.sourceMap[id]))
+                    .join('');
             }
-        }
 
-        function renderChatAddSelect() {
-            if (!chatAddSelect) return;
-            const bound = new Set(chatDraft.collections);
-            const options = allCollections.filter(c => !bound.has(c.id));
-            chatAddSelect.innerHTML = '<option value="">Add a collection\u2026</option>'
-                + options.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(truncate(c.id, 52))} (${c.chunkCount ?? 0})</option>`).join('');
-        }
+            if (overviewWrite) {
+                overviewWrite.innerHTML = state.effectiveWriteTarget
+                    ? `
+                        <div class="ss-cm-write-target-row">
+                            <span class="ss-cm-row-id" title="${escapeHtml(state.effectiveWriteTarget)}">${escapeHtml(truncate(state.effectiveWriteTarget, 82))}</span>
+                            <span class="ss-cm-source-badge ss-cm-source-${escapeHtml(state.effectiveWriteSource || 'own')}">${escapeHtml(getWriteScopeLabel(state.effectiveWriteSource))}</span>
+                        </div>
+                    `
+                    : '<div class="ss-cm-empty">No write target resolved.</div>';
+            }
 
-        chatAddBtn?.addEventListener('click', () => {
-            const id = chatAddSelect?.value;
+            renderOverviewWriteSelect(state);
+
+            if (overviewWriteHint) {
+                const inherited = getInheritedWriteTarget();
+                const isChatOverride = !!String(chatDraft.writeTarget || '').trim();
+                const zeroText = chunkCountMap.has(String(state.effectiveWriteTarget)) && Number(chunkCountMap.get(String(state.effectiveWriteTarget))) === 0
+                    ? ' This target currently has zero chunks.'
+                    : '';
+                const scopeText = isChatOverride
+                    ? 'Chat override active.'
+                    : 'Using the inherited write target.';
+                overviewWriteHint.textContent = isChatOverride
+                    ? `This chat is overriding the inherited write target. ${scopeText}${zeroText}`
+                    : `This chat is using the inherited write target (${getWriteScopeLabel(inherited.effectiveWriteSource)}). ${scopeText}${zeroText}`;
+            }
+
+            const warnings = [];
+            for (const duplicateId of state.duplicateIds) {
+                warnings.push(`Collection appears in both Character and Chat: ${duplicateId}`);
+            }
+            for (const missingId of missingIds) {
+                warnings.push(`Collection is not available on the current backend: ${missingId}`);
+            }
+            for (const emptyId of zeroChunkIds) {
+                warnings.push(`Collection has zero chunks: ${emptyId}`);
+            }
+
+            if (overviewWarnings) {
+                overviewWarnings.classList.toggle('ss-cm-warning-list-active', warnings.length > 0);
+                overviewWarnings.innerHTML = warnings.length > 0
+                    ? warnings.map(text => `
+                        <div class="ss-cm-warning-row">
+                            <i class="fa-solid fa-triangle-exclamation ss-cm-warning-icon" aria-hidden="true"></i>
+                            <span>${escapeHtml(text)}</span>
+                        </div>
+                    `).join('')
+                    : '<div class="ss-cm-empty">No configuration warnings.</div>';
+            }
+        };
+
+        const renderAll = () => {
+            coerceValidWriteTargets();
+            renderCharList();
+            renderChatList();
+            renderCharAddSelect();
+            renderChatAddSelect();
+            renderOverview();
+        };
+
+        root.querySelector('#ss-cm-char-add-btn')?.addEventListener('click', () => {
+            const id = String(charAddSelect?.value || '').trim();
+            if (!id || charDraft.collections.includes(id)) return;
+            charDraft.collections.push(id);
+            renderAll();
+        });
+
+        root.querySelector('#ss-cm-chat-add-btn')?.addEventListener('click', () => {
+            const id = String(chatAddSelect?.value || '').trim();
             if (!id || chatDraft.collections.includes(id)) return;
             chatDraft.collections.push(id);
-            if (!chatDraft.primaryCollection) chatDraft.primaryCollection = id;
-            if (chatAddSelect) chatAddSelect.value = '';
-            renderChatList();
-            renderChatAddSelect();
+            renderAll();
         });
 
-        // "Copy inherited to chat" — pre-fills chat draft with character-level collections
-        copyInheritedBtn?.addEventListener('click', () => {
-            if (!existingCharBinding || existingCharBinding.collections.length === 0) return;
-            let added = 0;
-            for (const id of existingCharBinding.collections) {
-                if (!chatDraft.collections.includes(id)) {
-                    chatDraft.collections.push(id);
-                    added++;
-                }
-            }
-            if (!chatDraft.primaryCollection) {
-                chatDraft.primaryCollection = existingCharBinding.primaryCollection || chatDraft.collections[0] || '';
-            }
-            if (added > 0) {
-                toastr.info(`Copied ${added} collection${added !== 1 ? 's' : ''} from character level — click Save to apply`);
-            }
-            renderChatList();
-            renderChatAddSelect();
+        overviewWriteSelect?.addEventListener('change', () => {
+            applyWriteTargetSelection(overviewWriteSelect.value || '');
+            renderAll();
         });
 
-        // ── Save ──────────────────────────────────────────────────────────────
-        const saveBtn = root.querySelector('#ss-cm-save');
         saveBtn?.addEventListener('click', () => {
             const liveSettings = extension_settings?.summary_sharder;
 
             if (charAvatarKey) {
-                if (charDraft.collections.length > 0) {
-                    setCharacterBinding(charAvatarKey, {
-                        collections: charDraft.collections,
-                        primaryCollection: charDraft.primaryCollection || charDraft.collections[0],
-                    }, liveSettings);
-                } else {
-                    setCharacterBinding(charAvatarKey, null, liveSettings);
-                }
+                setCharacterBinding(charAvatarKey, {
+                    collections: charDraft.collections,
+                    writeTarget: charDraft.writeTarget,
+                }, liveSettings);
             }
 
             if (currentChatId) {
-                if (chatDraft.collections.length > 0) {
-                    setChatBinding(currentChatId, {
-                        collections: chatDraft.collections,
-                        primaryCollection: chatDraft.primaryCollection || chatDraft.collections[0],
-                        includeOwn: true,
-                    }, liveSettings);
-                } else {
-                    setChatBinding(currentChatId, null, liveSettings);
-                }
+                setChatBinding(currentChatId, {
+                    collections: chatDraft.collections,
+                    writeTarget: chatDraft.writeTarget,
+                }, liveSettings);
+            }
+
+            // Re-run the resolver once using stored settings so invalid empties clear consistently.
+            if (charAvatarKey && !getCharacterBinding(charAvatarKey, liveSettings)) {
+                setCharacterBinding(charAvatarKey, null, liveSettings);
+            }
+            if (currentChatId && !getChatBinding(currentChatId, liveSettings)) {
+                setChatBinding(currentChatId, null, liveSettings);
             }
 
             saveSettings(settings);
             toastr.success('Collection bindings saved');
+            renderAll();
         });
 
-        // Initial render
-        renderCharList();
-        renderCharAddSelect();
-        renderChatList();
-        renderChatAddSelect();
-        updateChatInheritedDisplay();
+        renderAll();
     });
 
     await showPromise;

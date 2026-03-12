@@ -1,17 +1,15 @@
 /**
- * Collection Bindings — Multi-collection assignment system for RAG
+ * Collection Bindings - additive multi-collection assignment system for RAG.
  *
- * Two scope levels:
- *   - character bindings: apply to every chat with that character
- *   - chat bindings: override character-level for one specific chat
+ * Scope model:
+ *   - character bindings: default shared collections for every chat with that character
+ *   - chat bindings: extra collections and/or a write-target override for one chat
  *
- * Resolution order (highest → lowest priority):
- *   1. Chat-level binding  (+own collection if includeOwn is true, default true)
- *   2. Character-level binding  (+own collection always appended)
- *   3. Fallback: own auto-generated collection only
+ * Effective read model:
+ *   character collections + chat collections + own auto-generated collection
  *
- * "primaryCollection" is where new vectorizations are written.
- * All collections in the resolved list are queried at retrieval time.
+ * Effective write model:
+ *   chat writeTarget -> character writeTarget -> own auto-generated collection
  */
 
 import { extension_settings } from '../../../../../extensions.js';
@@ -19,35 +17,34 @@ import { ragLog } from '../logger.js';
 
 /**
  * @typedef {Object} CharacterBinding
- * @property {string[]} collections - Extra collection IDs to query alongside own
- * @property {string} primaryCollection - Collection ID where new vectors are written
+ * @property {string[]} collections - Shared collections read by all chats with this character
+ * @property {string} writeTarget - Default destination for new vector writes
  */
 
 /**
  * @typedef {Object} ChatBinding
- * @property {string[]} collections - Collection IDs to query
- * @property {string} primaryCollection - Collection ID where new vectors are written
- * @property {boolean} includeOwn - Whether to also query the chat's auto-generated collection
+ * @property {string[]} collections - Extra collections read only by this chat
+ * @property {string} writeTarget - Optional chat-specific destination for new vector writes
  */
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/**
- * @param {string|null|undefined} id
- * @returns {string}
- */
 function normalize(id) {
     return String(id || '').trim().replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
 }
 
-/**
- * Ensure the collectionBindings sub-tree exists on settings and return it.
- * Mutates `settings` in place so callers can write immediately.
- * @param {Object} [settings]
- * @returns {{characters: Object, chats: Object}|null}
- */
+function normalizeCollectionList(values) {
+    const seen = new Set();
+    const out = [];
+
+    for (const value of (Array.isArray(values) ? values : [])) {
+        const id = String(value || '').trim();
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        out.push(id);
+    }
+
+    return out;
+}
+
 function ensureBindingsRoot(settings) {
     const ss = settings || extension_settings?.summary_sharder;
     if (!ss || typeof ss !== 'object') return null;
@@ -65,11 +62,6 @@ function ensureBindingsRoot(settings) {
     return ss.collectionBindings;
 }
 
-/**
- * Read-only: returns the bindings root if it exists, without creating it.
- * @param {Object} [settings]
- * @returns {{characters: Object, chats: Object}|null}
- */
 function getBindingsRoot(settings) {
     const ss = settings || extension_settings?.summary_sharder;
     const root = ss?.collectionBindings;
@@ -77,16 +69,39 @@ function getBindingsRoot(settings) {
     return root;
 }
 
-// ---------------------------------------------------------------------------
-// Character-level bindings
-// ---------------------------------------------------------------------------
+function normalizeStoredBinding(raw) {
+    if (!raw || typeof raw !== 'object') return null;
 
-/**
- * Get character-level collection binding.
- * @param {string} avatar - Character avatar filename (e.g. "Alice.png")
- * @param {Object} [settings]
- * @returns {CharacterBinding|null}
- */
+    const collections = normalizeCollectionList(raw.collections);
+    const writeTarget = String(raw.writeTarget || raw.primaryCollection || '').trim();
+    if (collections.length === 0 && !writeTarget) return null;
+
+    return { collections, writeTarget };
+}
+
+function createSourceMapEntries(ids = [], source = '') {
+    const out = {};
+    for (const id of ids) {
+        if (!id) continue;
+        if (!out[id]) out[id] = [];
+        if (!out[id].includes(source)) out[id].push(source);
+    }
+    return out;
+}
+
+function mergeSourceMaps(...maps) {
+    const out = {};
+    for (const map of maps) {
+        for (const [id, sources] of Object.entries(map || {})) {
+            if (!out[id]) out[id] = [];
+            for (const source of (Array.isArray(sources) ? sources : [])) {
+                if (!out[id].includes(source)) out[id].push(source);
+            }
+        }
+    }
+    return out;
+}
+
 export function getCharacterBinding(avatar, settings) {
     const key = String(avatar || '').trim();
     if (!key) return null;
@@ -94,21 +109,9 @@ export function getCharacterBinding(avatar, settings) {
     const root = getBindingsRoot(settings);
     if (!root) return null;
 
-    const raw = root.characters?.[key];
-    if (!raw || !Array.isArray(raw.collections) || raw.collections.length === 0) return null;
-
-    return {
-        collections: raw.collections.map(String).filter(Boolean),
-        primaryCollection: String(raw.primaryCollection || ''),
-    };
+    return normalizeStoredBinding(root.characters?.[key]);
 }
 
-/**
- * Set or clear a character-level collection binding.
- * @param {string} avatar - Character avatar filename
- * @param {CharacterBinding|null} binding - New binding, or null to remove
- * @param {Object} [settings]
- */
 export function setCharacterBinding(avatar, binding, settings) {
     const key = String(avatar || '').trim();
     if (!key) return;
@@ -116,27 +119,18 @@ export function setCharacterBinding(avatar, binding, settings) {
     const root = ensureBindingsRoot(settings);
     if (!root) return;
 
-    if (!binding) {
+    const normalized = normalizeStoredBinding(binding);
+    if (!normalized) {
         delete root.characters[key];
         return;
     }
 
     root.characters[key] = {
-        collections: (Array.isArray(binding.collections) ? binding.collections : []).map(String).filter(Boolean),
-        primaryCollection: String(binding.primaryCollection || ''),
+        collections: normalized.collections,
+        writeTarget: normalized.writeTarget,
     };
 }
 
-// ---------------------------------------------------------------------------
-// Chat-level bindings
-// ---------------------------------------------------------------------------
-
-/**
- * Get chat-level collection binding.
- * @param {string} chatId
- * @param {Object} [settings]
- * @returns {ChatBinding|null}
- */
 export function getChatBinding(chatId, settings) {
     const key = normalize(chatId);
     if (!key) return null;
@@ -144,22 +138,9 @@ export function getChatBinding(chatId, settings) {
     const root = getBindingsRoot(settings);
     if (!root) return null;
 
-    const raw = root.chats?.[key];
-    if (!raw || !Array.isArray(raw.collections) || raw.collections.length === 0) return null;
-
-    return {
-        collections: raw.collections.map(String).filter(Boolean),
-        primaryCollection: String(raw.primaryCollection || ''),
-        includeOwn: raw.includeOwn !== false,
-    };
+    return normalizeStoredBinding(root.chats?.[key]);
 }
 
-/**
- * Set or clear a chat-level collection binding.
- * @param {string} chatId
- * @param {ChatBinding|null} binding - New binding, or null to remove
- * @param {Object} [settings]
- */
 export function setChatBinding(chatId, binding, settings) {
     const key = normalize(chatId);
     if (!key) return;
@@ -167,129 +148,119 @@ export function setChatBinding(chatId, binding, settings) {
     const root = ensureBindingsRoot(settings);
     if (!root) return;
 
-    if (!binding) {
+    const normalized = normalizeStoredBinding(binding);
+    if (!normalized) {
         delete root.chats[key];
         return;
     }
 
     root.chats[key] = {
-        collections: (Array.isArray(binding.collections) ? binding.collections : []).map(String).filter(Boolean),
-        primaryCollection: String(binding.primaryCollection || ''),
-        includeOwn: binding.includeOwn !== false,
+        collections: normalized.collections,
+        writeTarget: normalized.writeTarget,
     };
 }
 
-// ---------------------------------------------------------------------------
-// Resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true if any explicit binding exists for this chat or character.
- * @param {string} chatId
- * @param {string} characterAvatar
- * @param {Object} [settings]
- * @returns {boolean}
- */
 export function hasAnyBinding(chatId, characterAvatar, settings) {
-    const root = getBindingsRoot(settings);
-    if (!root) return false;
-
-    const chatKey = normalize(chatId);
-    if (chatKey && root.chats?.[chatKey] && Array.isArray(root.chats[chatKey].collections) && root.chats[chatKey].collections.length > 0) {
-        return true;
-    }
-
-    const charKey = String(characterAvatar || '').trim();
-    if (charKey && root.characters?.[charKey] && Array.isArray(root.characters[charKey].collections) && root.characters[charKey].collections.length > 0) {
-        return true;
-    }
-
-    return false;
+    return !!resolveEffectiveBindingState(chatId, characterAvatar, settings, '').hasAnyBinding;
 }
 
-/**
- * Resolve all collection IDs to query for a chat.
- * Returns an ordered, deduplicated array.
- *
- * @param {string} chatId
- * @param {string} characterAvatar
- * @param {Object} [settings]
- * @param {string} ownCollectionId - The chat's auto-generated collection ID
- * @returns {string[]}
- */
+export function resolveEffectiveBindingState(chatId, characterAvatar, settings, ownCollectionId) {
+    const own = String(ownCollectionId || '').trim();
+    const chatKey = normalize(chatId);
+    const charKey = String(characterAvatar || '').trim();
+    const root = getBindingsRoot(settings);
+
+    const characterBinding = charKey ? normalizeStoredBinding(root?.characters?.[charKey]) : null;
+    const chatBinding = chatKey ? normalizeStoredBinding(root?.chats?.[chatKey]) : null;
+
+    const characterCollections = characterBinding?.collections || [];
+    const chatCollections = chatBinding?.collections || [];
+    const ownCollections = own ? [own] : [];
+
+    const sourceMap = mergeSourceMaps(
+        createSourceMapEntries(characterCollections, 'character'),
+        createSourceMapEntries(chatCollections, 'chat'),
+        createSourceMapEntries(ownCollections, 'own'),
+    );
+
+    const effectiveReadIds = normalizeCollectionList([
+        ...characterCollections,
+        ...chatCollections,
+        ...ownCollections,
+    ]);
+
+    const duplicateIds = Object.entries(sourceMap)
+        .filter(([, sources]) => Array.isArray(sources) && sources.length > 1)
+        .map(([id]) => id);
+
+    const characterWriteTarget = String(characterBinding?.writeTarget || '').trim();
+    const chatWriteTarget = String(chatBinding?.writeTarget || '').trim();
+
+    const validTargets = new Set(effectiveReadIds);
+    if (own) validTargets.add(own);
+
+    let effectiveWriteTarget = own;
+    let effectiveWriteSource = own ? 'own' : '';
+    let invalidWriteTarget = '';
+    let invalidWriteSource = '';
+
+    if (chatWriteTarget) {
+        if (validTargets.has(chatWriteTarget)) {
+            effectiveWriteTarget = chatWriteTarget;
+            effectiveWriteSource = 'chat';
+        } else {
+            invalidWriteTarget = chatWriteTarget;
+            invalidWriteSource = 'chat';
+        }
+    }
+
+    if (effectiveWriteSource !== 'chat' && characterWriteTarget) {
+        if (validTargets.has(characterWriteTarget)) {
+            effectiveWriteTarget = characterWriteTarget;
+            effectiveWriteSource = 'character';
+        } else if (!invalidWriteTarget) {
+            invalidWriteTarget = characterWriteTarget;
+            invalidWriteSource = 'character';
+        }
+    }
+
+    if (!effectiveWriteTarget && effectiveReadIds.length > 0) {
+        effectiveWriteTarget = effectiveReadIds[0];
+        effectiveWriteSource = sourceMap[effectiveWriteTarget]?.[0] || '';
+    }
+
+    return {
+        chatId: chatKey,
+        characterAvatar: charKey,
+        ownCollectionId: own,
+        characterBinding,
+        chatBinding,
+        characterCollections,
+        chatCollections,
+        effectiveReadIds,
+        duplicateIds,
+        sourceMap,
+        effectiveWriteTarget,
+        effectiveWriteSource,
+        invalidWriteTarget,
+        invalidWriteSource,
+        hasAnyBinding: !!(characterBinding || chatBinding),
+    };
+}
+
 export function resolveCollectionIds(chatId, characterAvatar, settings, ownCollectionId) {
-    const own = String(ownCollectionId || '').trim();
-    const chatKey = normalize(chatId);
-    const charKey = String(characterAvatar || '').trim();
-    const root = getBindingsRoot(settings);
-
-    // Chat-level binding wins
-    if (chatKey && root?.chats?.[chatKey]) {
-        const raw = root.chats[chatKey];
-        if (Array.isArray(raw.collections) && raw.collections.length > 0) {
-            const ids = raw.collections.map(String).filter(Boolean);
-            if (own && raw.includeOwn !== false) ids.push(own);
-            return [...new Set(ids)];
-        }
-    }
-
-    // Character-level binding
-    if (charKey && root?.characters?.[charKey]) {
-        const raw = root.characters[charKey];
-        if (Array.isArray(raw.collections) && raw.collections.length > 0) {
-            const ids = raw.collections.map(String).filter(Boolean);
-            if (own) ids.push(own);
-            return [...new Set(ids)];
-        }
-    }
-
-    // Fallback: own collection only
-    return own ? [own] : [];
+    return resolveEffectiveBindingState(chatId, characterAvatar, settings, ownCollectionId).effectiveReadIds;
 }
 
-/**
- * Resolve the primary collection ID (where new vectorizations go).
- * Returns `ownCollectionId` when no binding overrides the primary.
- *
- * @param {string} chatId
- * @param {string} characterAvatar
- * @param {Object} [settings]
- * @param {string} ownCollectionId
- * @returns {string}
- */
+export function resolveWriteTargetId(chatId, characterAvatar, settings, ownCollectionId) {
+    return resolveEffectiveBindingState(chatId, characterAvatar, settings, ownCollectionId).effectiveWriteTarget;
+}
+
+// Backward-compatible alias during transition.
 export function resolvePrimaryCollectionId(chatId, characterAvatar, settings, ownCollectionId) {
-    const own = String(ownCollectionId || '').trim();
-    const chatKey = normalize(chatId);
-    const charKey = String(characterAvatar || '').trim();
-    const root = getBindingsRoot(settings);
-
-    if (chatKey && root?.chats?.[chatKey]) {
-        const primary = String(root.chats[chatKey]?.primaryCollection || '').trim();
-        if (primary) return primary;
-    }
-
-    if (charKey && root?.characters?.[charKey]) {
-        const primary = String(root.characters[charKey]?.primaryCollection || '').trim();
-        if (primary) return primary;
-    }
-
-    return own;
+    return resolveWriteTargetId(chatId, characterAvatar, settings, ownCollectionId);
 }
 
-// ---------------------------------------------------------------------------
-// Migration
-// ---------------------------------------------------------------------------
-
-/**
- * Migrate legacy `collectionIdOverrides` and `collectionAliases` entries into
- * the new `collectionBindings` structure. Idempotent — skips entries that
- * already have a chat-level binding.
- *
- * @param {Object} settings
- * @param {function(string): string} getShardIdFn
- * @param {function(string): string} getStandardIdFn
- * @returns {boolean} Whether any migrations were performed
- */
 export function migrateToCollectionBindings(settings, getShardIdFn, getStandardIdFn) {
     let migrated = false;
     const root = ensureBindingsRoot(settings);
@@ -297,32 +268,62 @@ export function migrateToCollectionBindings(settings, getShardIdFn, getStandardI
 
     const isSharder = settings.sharderMode === true;
 
-    // --- Migrate collectionIdOverrides ---
+    for (const [avatar, raw] of Object.entries(root.characters || {})) {
+        const normalized = normalizeStoredBinding(raw);
+        if (!normalized) {
+            delete root.characters[avatar];
+            migrated = true;
+            continue;
+        }
+
+        if (raw.writeTarget !== normalized.writeTarget || raw.primaryCollection !== undefined || raw.includeOwn !== undefined) {
+            root.characters[avatar] = {
+                collections: normalized.collections,
+                writeTarget: normalized.writeTarget,
+            };
+            migrated = true;
+        }
+    }
+
+    for (const [chatId, raw] of Object.entries(root.chats || {})) {
+        const normalized = normalizeStoredBinding(raw);
+        if (!normalized) {
+            delete root.chats[chatId];
+            migrated = true;
+            continue;
+        }
+
+        if (raw.writeTarget !== normalized.writeTarget || raw.primaryCollection !== undefined || raw.includeOwn !== undefined) {
+            root.chats[chatId] = {
+                collections: normalized.collections,
+                writeTarget: normalized.writeTarget,
+            };
+            migrated = true;
+        }
+    }
+
     const overrides = settings.collectionIdOverrides;
     if (overrides && typeof overrides === 'object') {
         for (const [chatId, collectionId] of Object.entries(overrides)) {
             const key = normalize(chatId);
-            if (!key || !collectionId) continue;
-            if (root.chats[key]) continue; // already has a binding
+            const collection = String(collectionId || '').trim();
+            if (!key || !collection || root.chats[key]) continue;
 
             root.chats[key] = {
-                collections: [String(collectionId)],
-                primaryCollection: String(collectionId),
-                includeOwn: false,
+                collections: [collection],
+                writeTarget: collection,
             };
             migrated = true;
-            ragLog.log(`Migrated collectionIdOverrides[${key}] → collectionBindings.chats`);
+            ragLog.log(`Migrated collectionIdOverrides[${key}] -> collectionBindings.chats`);
         }
     }
 
-    // --- Migrate collectionAliases ---
     const aliases = settings.collectionAliases;
     if (aliases && typeof aliases === 'object') {
         for (const [chatId, sourceChatId] of Object.entries(aliases)) {
             const key = normalize(chatId);
             const sourceKey = normalize(sourceChatId);
-            if (!key || !sourceKey) continue;
-            if (root.chats[key]) continue; // already migrated
+            if (!key || !sourceKey || root.chats[key]) continue;
 
             let collectionId = '';
             try {
@@ -333,15 +334,13 @@ export function migrateToCollectionBindings(settings, getShardIdFn, getStandardI
                 continue;
             }
 
-            if (collectionId) {
-                root.chats[key] = {
-                    collections: [collectionId],
-                    primaryCollection: collectionId,
-                    includeOwn: false,
-                };
-                migrated = true;
-                ragLog.log(`Migrated collectionAliases[${key}] → collectionBindings.chats`);
-            }
+            if (!collectionId) continue;
+            root.chats[key] = {
+                collections: [String(collectionId)],
+                writeTarget: String(collectionId),
+            };
+            migrated = true;
+            ragLog.log(`Migrated collectionAliases[${key}] -> collectionBindings.chats`);
         }
     }
 

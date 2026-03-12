@@ -34,7 +34,7 @@ import {
     initCollectionLifecycle,
     rearrangeChat,
     clearRagPromptInjection,
-    hasAnyBinding,
+    getChatBinding,
 } from './core/rag/index.js';
 
 const MODULE_NAME = 'SummarySharder';
@@ -376,17 +376,11 @@ function onChatChanged() {
         ? context?.characters?.[charIdx]?.avatar ?? null
         : null;
 
-    // Only show picker if:
-    //  (a) parent has explicit multi-collection bindings (character- or chat-level), AND
-    //  (b) the branch itself has no bindings yet (first open only)
-    const parentHasBindings = parentChatId
-        ? hasAnyBinding(parentChatId, charAvatar ?? '', settings)
-        : false;
-    const branchHasBindings = normalizedChatId
-        ? hasAnyBinding(normalizedChatId, charAvatar ?? '', settings)
-        : true; // treat unknown as "already set" to be safe
+    const branchHasChatBinding = normalizedChatId
+        ? !!getChatBinding(normalizedChatId, settings)
+        : true;
 
-    if (parentChatId && normalizedChatId && parentChatId !== normalizedChatId && parentHasBindings && !branchHasBindings) {
+    if (parentChatId && normalizedChatId && parentChatId !== normalizedChatId && !branchHasChatBinding) {
         // Defer slightly so the chat UI finishes loading before the modal appears
         setTimeout(async () => {
             try {
@@ -503,7 +497,7 @@ jQuery(async () => {
                 const { openRagBrowserModal } = await import('./ui/modals/management/rag-browser-modal.js');
                 await openRagBrowserModal(settings);
             } catch (error) {
-                toastr.error(`Could not open vector browser: ${error?.message || error}`);
+                toastr.error(`Could not open collection browser: ${error?.message || error}`);
             }
         },
         onPurgeVectors: async () => {

@@ -114,8 +114,8 @@ function buildActionsPanel(snapshot) {
         const items = [
             actionBtn('vectorize', 'fa-database', 'Vectorize Chat'),
             actionBtn('purge-vectors', 'fa-trash', 'Purge Vectors'),
-            actionBtn('browse-vectors', 'fa-compass', 'Browse Vectors'),
-            actionBtn('manage-collections', 'fa-link', 'Manage Collections'),
+            actionBtn('browse-vectors', 'fa-compass', 'Coll. Browser'),
+            actionBtn('manage-collections', 'fa-link', 'Coll. Manager'),
             actionBtn('rag-history', 'fa-clock-rotate-left', 'RAG History'),
         ];
         sections.push({ title: 'RAG', items, layout: 'grid' });
