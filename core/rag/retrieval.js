@@ -5,7 +5,7 @@
 
 import { setExtensionPrompt } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
-import { getActiveCollectionId, getShardCollectionId } from './collection-manager.js';
+import { getActiveCollectionIds, getPrimaryCollectionId, getShardCollectionId } from './collection-manager.js';
 import { rerankDocuments } from './reranker-client.js';
 import { hybridQuery, listChunks, queryChunks } from './vector-client.js';
 import { keywordBoost, runClientHybridFusion, scoreAndRank } from './scoring.js';
@@ -480,9 +480,10 @@ function orderWithSceneGrouping(results) {
 /**
  * @param {Object} settings
  * @param {Array<Object>} shardResults
+ * @param {string} primaryCollectionId
  * @returns {Promise<Array<Object>>}
  */
-async function expandByScene(settings, shardResults) {
+async function expandByScene(settings, shardResults, primaryCollectionId) {
     const rag = settings?.rag;
     if (!rag?.sceneExpansion || !Array.isArray(shardResults) || shardResults.length === 0) {
         return [];
@@ -499,7 +500,9 @@ async function expandByScene(settings, shardResults) {
 
     if (sceneCodes.length === 0) return [];
 
-    const collectionId = getShardCollectionId();
+    // Use the primary collection for scene expansion — scene codes are specific
+    // to summaries generated for this chat's own shard collection.
+    const collectionId = primaryCollectionId || getShardCollectionId();
     const expanded = [];
     const maxSceneExpansionChunks = Math.max(0, Number(rag.maxSceneExpansionChunks) || 10);
 
@@ -792,20 +795,33 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         const topK = Math.max(1, (Number(rag.insertCount) || 5) * (wantsHybrid ? overfetchMultiplier : 4));
         const threshold = Math.max(0, Math.min(1, Number(rag.scoreThreshold) || 0.25));
 
-        const collectionId = getActiveCollectionId(null, settings);
+        // Multi-collection: query all bound collections in parallel, deduplicate results.
+        // primaryCollectionId is used for fallback fetches (superseding/rolling/anchors)
+        // which are chat-specific and should not be scattered across shared collections.
+        const collectionIds = getActiveCollectionIds(null, settings);
+        const primaryCollectionId = getPrimaryCollectionId(null, settings);
 
         const queryFn = useNativeHybrid ? hybridQuery : queryChunks;
 
-        const shardRes = await queryFn(collectionId, queryText, topK, threshold, rag);
-        const shardResults = Array.isArray(shardRes?.results) ? shardRes.results : [];
+        const querySettled = await Promise.allSettled(
+            collectionIds.map(id => queryFn(id, queryText, topK, threshold, rag))
+        );
+        const shardResults = querySettled.flatMap(r =>
+            r.status === 'fulfilled' && Array.isArray(r.value?.results) ? r.value.results : []
+        );
+
+        if (collectionIds.length > 1) {
+            ragLog.debug(`Multi-collection retrieval: queried ${collectionIds.length} collections, got ${shardResults.length} raw results`);
+        }
 
         let merged = dedupeResults(shardResults);
 
         // Fallback: If non-sharder mode, ensure the latest N summaries are included
         // to prevent recent context from being lost if it doesn't match query keywords.
+        // Uses primary collection only — "latest" is scoped to this chat's own output.
         if (!isSharder) {
             try {
-                const { items: latestItems } = await listChunks(collectionId, rag, {
+                const { items: latestItems } = await listChunks(primaryCollectionId, rag, {
                     limit: Math.max(1, Number(rag.insertCount) || 5),
                 });
                 if (Array.isArray(latestItems) && latestItems.length > 0) {
@@ -829,15 +845,17 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
 
         merged = merged.filter(item => (Number(item?.score) || 0) >= threshold);
 
-        // Scene expansion only applies to Sharder Mode (which has [S{n}:{n}] scene codes)
-        const sceneExpanded = isSharder ? await expandByScene(settings, shardResults) : [];
+        // Scene expansion only applies to Sharder Mode (which has [S{n}:{n}] scene codes).
+        // Uses the primary collection — scene codes are specific to this chat's own summaries.
+        const sceneExpanded = isSharder ? await expandByScene(settings, shardResults, primaryCollectionId) : [];
 
         merged = dedupeResults([...merged, ...sceneExpanded]);
 
         // Fallback: If no superseding chunk was found by the initial query, fetch the latest one explicitly.
         // This ensures the "Current State" summary is always available if it exists in the collection.
+        // Uses primary collection only — superseding chunks are chat-specific.
         if (isSharder && !merged.some(item => item?.metadata?.chunkBehavior === 'superseding')) {
-            const latest = await fetchLatestSuperseding(collectionId, rag);
+            const latest = await fetchLatestSuperseding(primaryCollectionId, rag);
             if (latest) {
                 merged.push(latest);
                 merged = dedupeResults(merged);
@@ -860,10 +878,12 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         let developmentsFallbackFetched = 0;
         let developmentsFallbackHasMore = false;
         if (isSharder) {
+            // Fallback fetches use primary collection — rolling/anchors/developments
+            // are generated by this chat's own summarization pipeline.
             const [fallbackRolling, fallbackAnchors, fallbackDevelopments] = await Promise.all([
-                fetchLatestRolling(collectionId, rag, 50),
-                fetchLatestAnchors(collectionId, rag, 50),
-                fetchLatestDevelopments(collectionId, rag, 50),
+                fetchLatestRolling(primaryCollectionId, rag, 50),
+                fetchLatestAnchors(primaryCollectionId, rag, 50),
+                fetchLatestDevelopments(primaryCollectionId, rag, 50),
             ]);
 
             rollingPinned = mergeLatestRolling(queryRolling, fallbackRolling.items);
@@ -968,12 +988,14 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             mode: isSharder ? 'sharder' : 'standard',
         };
 
-        ragLog.log(`Retrieval: ${merged.length} results (${shardResults.length} queried, reranker=${!!rerankMeta.metadata?.applied})`);
+        ragLog.log(`Retrieval: ${merged.length} results (${shardResults.length} queried across ${collectionIds.length} collection(s), reranker=${!!rerankMeta.metadata?.applied})`);
         ragLog.debug('Retrieval details', {
             mode: isSharder ? 'sharder' : 'standard',
             backend: rag.backend,
             useNativeHybrid,
             useClientHybrid,
+            collectionIds,
+            primaryCollectionId,
             shardResults: shardResults.length,
             sceneExpanded: sceneExpanded.length,
             rollingPinned: rollingPinned.length,

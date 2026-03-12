@@ -573,6 +573,10 @@ async function handleAction(action, button) {
                 await closePanels();
                 await callbacksRef.onOpenRagDebug?.();
                 break;
+            case 'manage-collections':
+                await closePanels();
+                await callbacksRef.onManageCollections?.();
+                break;
             case 'rag-history':
                 await closePanels();
                 await callbacksRef.onOpenRagHistory?.();

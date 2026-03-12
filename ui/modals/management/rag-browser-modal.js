@@ -23,6 +23,8 @@ import {
     queryChunks,
     setCollectionAlias,
     setCollectionIdOverride,
+    setChatBinding,
+    getChatBinding,
     getQdrantDimensionMismatchToastMessage,
     isQdrantDimensionMismatchError,
 } from '../../../core/rag/index.js';
@@ -615,7 +617,8 @@ function updateCollectionHint(state, dom) {
 }
 
 /**
- * Find all chats (across all characters) linked to a collection via override.
+ * Find all chats (across all characters) linked to a collection.
+ * Checks both the new collectionBindings.chats and the legacy collectionIdOverrides.
  * Returns objects with displayName and isCurrentChar flag for formatting.
  * @param {Object} state
  * @param {string} collectionId
@@ -625,7 +628,6 @@ function getChatsLinkedToCollection(state, collectionId) {
     if (!collectionId) return [];
 
     const ss = extension_settings?.summary_sharder;
-    const overrides = ss?.collectionIdOverrides || {};
 
     // Build a lookup map from chatId -> displayName for the current character's chats
     const displayNameMap = new Map();
@@ -634,9 +636,26 @@ function getChatsLinkedToCollection(state, collectionId) {
         if (chatId) displayNameMap.set(chatId, chat.displayName || chat.chatId);
     }
 
+    const seen = new Set();
     const linked = [];
+
+    // New binding system: check collectionBindings.chats
+    const chatBindings = ss?.collectionBindings?.chats || {};
+    for (const [chatId, binding] of Object.entries(chatBindings)) {
+        if (!Array.isArray(binding?.collections)) continue;
+        if (!binding.collections.includes(collectionId)) continue;
+        if (seen.has(chatId)) continue;
+        seen.add(chatId);
+        const displayName = displayNameMap.get(chatId) || chatId;
+        linked.push({ chatId, displayName, isCurrentChar: displayNameMap.has(chatId) });
+    }
+
+    // Legacy: collectionIdOverrides
+    const overrides = ss?.collectionIdOverrides || {};
     for (const [chatId, overrideId] of Object.entries(overrides)) {
         if (overrideId !== collectionId) continue;
+        if (seen.has(chatId)) continue;
+        seen.add(chatId);
         const displayName = displayNameMap.get(chatId) || chatId;
         linked.push({ chatId, displayName, isCurrentChar: displayNameMap.has(chatId) });
     }
@@ -1747,10 +1766,15 @@ async function handleLinkToggle(state, settings, dom) {
         return;
     }
 
+    const ss = extension_settings?.summary_sharder;
+    const existingBinding = getChatBinding(state.currentChatId, ss);
     const currentAlias = getCollectionAlias(state.currentChatId);
     const currentOverride = getCollectionIdOverride(state.currentChatId);
+    const hasAnyLink = existingBinding || currentAlias || currentOverride;
 
-    if (currentAlias || currentOverride) {
+    if (hasAnyLink) {
+        // Clear all link mechanisms
+        setChatBinding(state.currentChatId, null, ss);
         if (currentAlias) setCollectionAlias(state.currentChatId, null);
         if (currentOverride) setCollectionIdOverride(state.currentChatId, null);
         saveSettings(settings);
@@ -1760,7 +1784,12 @@ async function handleLinkToggle(state, settings, dom) {
             toastr.warning('Select a collection first');
             return;
         }
-        setCollectionIdOverride(state.currentChatId, state.collectionId);
+        // Write through the new binding system (single collection, no includeOwn)
+        setChatBinding(state.currentChatId, {
+            collections: [state.collectionId],
+            primaryCollection: state.collectionId,
+            includeOwn: false,
+        }, ss);
         saveSettings(settings);
         toastr.success('Collection linked to current chat');
     }

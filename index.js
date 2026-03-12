@@ -34,6 +34,7 @@ import {
     initCollectionLifecycle,
     rearrangeChat,
     clearRagPromptInjection,
+    hasAnyBinding,
 } from './core/rag/index.js';
 
 const MODULE_NAME = 'SummarySharder';
@@ -340,6 +341,15 @@ async function onMessageInserted(insertedIndex) {
 }
 
 /**
+ * Normalize a chat ID by stripping file extensions.
+ * @param {string} chatId
+ * @returns {string}
+ */
+function normalizeChatId(chatId) {
+    return String(chatId || '').trim().replace(/\.jsonl$/i, '').replace(/\.json$/i, '').trim();
+}
+
+/**
  * Handle chat change - reset tracking
  */
 function onChatChanged() {
@@ -354,6 +364,38 @@ function onChatChanged() {
     if (chatRanges.length > 0) {
         const maxEnd = Math.max(...chatRanges.map(r => r.end));
         lastSummarizedIndex = maxEnd;
+    }
+
+    // Branch detection: if this chat has main_chat set and no existing RAG bindings,
+    // it is a new branch — offer to inherit the parent's collection bindings.
+    const chatMeta = context?.chatMetadata;
+    const parentChatId = chatMeta?.main_chat ? normalizeChatId(String(chatMeta.main_chat)) : null;
+    const normalizedChatId = normalizeChatId(chatId ?? '');
+    const charIdx = context?.characterId;
+    const charAvatar = (charIdx !== undefined && charIdx !== null)
+        ? context?.characters?.[charIdx]?.avatar ?? null
+        : null;
+
+    // Only show picker if:
+    //  (a) parent has explicit multi-collection bindings (character- or chat-level), AND
+    //  (b) the branch itself has no bindings yet (first open only)
+    const parentHasBindings = parentChatId
+        ? hasAnyBinding(parentChatId, charAvatar ?? '', settings)
+        : false;
+    const branchHasBindings = normalizedChatId
+        ? hasAnyBinding(normalizedChatId, charAvatar ?? '', settings)
+        : true; // treat unknown as "already set" to be safe
+
+    if (parentChatId && normalizedChatId && parentChatId !== normalizedChatId && parentHasBindings && !branchHasBindings) {
+        // Defer slightly so the chat UI finishes loading before the modal appears
+        setTimeout(async () => {
+            try {
+                const { showBranchCollectionPicker } = await import('./ui/modals/management/branch-picker-modal.js');
+                await showBranchCollectionPicker(normalizedChatId, parentChatId, charAvatar, settings);
+            } catch (error) {
+                log.warn('Branch collection picker failed:', error?.message || error);
+            }
+        }, 600);
     }
 
     // Auto-detect hidden ranges on chat load
@@ -556,6 +598,14 @@ jQuery(async () => {
                 await openRagDebugModal(getActiveRagSettings(settings));
             } catch (error) {
                 toastr.error(`Could not open RAG debug: ${error?.message || error}`);
+            }
+        },
+        onManageCollections: async () => {
+            try {
+                const { openCollectionManagerModal } = await import('./ui/modals/management/collection-manager-modal.js');
+                await openCollectionManagerModal(settings);
+            } catch (error) {
+                toastr.error(`Could not open collection manager: ${error?.message || error}`);
             }
         },
         onOpenRagHistory: async () => {

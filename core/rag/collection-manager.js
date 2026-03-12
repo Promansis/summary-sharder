@@ -7,6 +7,11 @@ import { eventSource, event_types } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
 import { purgeCollection } from './vector-client.js';
 import { ragLog } from '../logger.js';
+import {
+    hasAnyBinding,
+    resolveCollectionIds,
+    resolvePrimaryCollectionId,
+} from './collection-bindings.js';
 
 const SHARD_PREFIX = 'ss_shards_';
 const STANDARD_PREFIX = 'ss_standard_';
@@ -56,6 +61,17 @@ function toSafeCollectionKey(chatId) {
  */
 function getCurrentChatId() {
     return SillyTavern.getContext()?.chatId ?? null;
+}
+
+/**
+ * Get the current character's avatar filename from SillyTavern context.
+ * @returns {string|null}
+ */
+function getCurrentCharacterAvatar() {
+    const ctx = SillyTavern.getContext();
+    const idx = ctx?.characterId;
+    if (idx === undefined || idx === null) return null;
+    return ctx?.characters?.[idx]?.avatar ?? null;
 }
 
 /**
@@ -155,25 +171,98 @@ export function setCollectionIdOverride(chatId, collectionId) {
 }
 
 /**
+ * Get the primary collection ID for a chat — where new vectorizations are written.
+ *
+ * Resolution order (highest → lowest priority):
+ *   1. Chat-level binding primaryCollection (new system)
+ *   2. Character-level binding primaryCollection (new system)
+ *   3. Legacy collectionIdOverride (old system, kept for compat)
+ *   4. Legacy collectionAlias (old system, kept for compat)
+ *   5. Own auto-generated collection
+ *
+ * @param {string|null} [chatId] - Chat ID (defaults to current chat)
+ * @param {Object} [settings] - Extension settings
+ * @returns {string}
+ */
+export function getPrimaryCollectionId(chatId, settings) {
+    const resolvedChatId = normalizeChatId(chatId || getCurrentChatId());
+    const isSharder = settings?.sharderMode === true;
+
+    // Compute own collection baseline (no overrides applied)
+    let ownId = '';
+    try {
+        if (resolvedChatId) {
+            ownId = isSharder
+                ? getShardCollectionId(resolvedChatId)
+                : getStandardCollectionId(resolvedChatId);
+        }
+    } catch {
+        // no active chat
+    }
+
+    // New binding system: chat-level → character-level
+    const avatar = getCurrentCharacterAvatar();
+    const primary = resolvePrimaryCollectionId(resolvedChatId, avatar, settings, ownId);
+    if (primary && primary !== ownId) return primary;
+
+    // Legacy: direct override
+    const override = settings?.collectionIdOverrides?.[resolvedChatId];
+    if (override) return String(override);
+
+    // Legacy: alias
+    const alias = settings?.collectionAliases?.[resolvedChatId];
+    const targetChatId = normalizeChatId(alias ? String(alias) : resolvedChatId);
+
+    return isSharder
+        ? getShardCollectionId(targetChatId)
+        : getStandardCollectionId(targetChatId);
+}
+
+/**
  * Get the active collection ID based on the current mode.
- * Uses shard collection in sharder mode, standard collection otherwise.
- * A direct collectionIdOverride takes precedence over chat-level aliases.
+ * Alias for getPrimaryCollectionId — kept for backward compatibility.
  * @param {string|null} [chatId] - Chat ID (defaults to current chat)
  * @param {Object} [settings] - Extension settings
  * @returns {string}
  */
 export function getActiveCollectionId(chatId, settings) {
+    return getPrimaryCollectionId(chatId, settings);
+}
+
+/**
+ * Get all collection IDs to query for the current chat.
+ * Includes the own collection plus any additional collections from bindings.
+ * When no bindings exist, falls back to the single primary collection.
+ *
+ * @param {string|null} [chatId] - Chat ID (defaults to current chat)
+ * @param {Object} [settings] - Extension settings
+ * @returns {string[]}
+ */
+export function getActiveCollectionIds(chatId, settings) {
     const resolvedChatId = normalizeChatId(chatId || getCurrentChatId());
+    const isSharder = settings?.sharderMode === true;
 
-    const override = settings?.collectionIdOverrides?.[resolvedChatId];
-    if (override) return String(override);
+    let ownId = '';
+    try {
+        if (resolvedChatId) {
+            ownId = isSharder
+                ? getShardCollectionId(resolvedChatId)
+                : getStandardCollectionId(resolvedChatId);
+        }
+    } catch {
+        // no active chat
+    }
 
-    const alias = settings?.collectionAliases?.[resolvedChatId];
-    const targetChatId = normalizeChatId(alias ? String(alias) : resolvedChatId);
+    const avatar = getCurrentCharacterAvatar();
 
-    return (settings?.sharderMode === true)
-        ? getShardCollectionId(targetChatId)
-        : getStandardCollectionId(targetChatId);
+    // Use new binding system if any binding is set
+    if (hasAnyBinding(resolvedChatId, avatar, settings)) {
+        return resolveCollectionIds(resolvedChatId, avatar, settings, ownId);
+    }
+
+    // Fall back to single-collection via legacy path
+    const primary = getPrimaryCollectionId(resolvedChatId, settings);
+    return primary ? [primary] : (ownId ? [ownId] : []);
 }
 
 /**

@@ -1,4 +1,5 @@
 export * from './vector-client.js';
+export * from './collection-bindings.js';
 export * from './collection-manager.js';
 export * from './chunking.js';
 export * from './archive.js';

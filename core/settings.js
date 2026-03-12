@@ -13,6 +13,8 @@ import {
 } from '../../../../extensions.js';
 
 import { isDebugEnabled, log } from './logger.js';
+import { migrateToCollectionBindings } from './rag/collection-bindings.js';
+import { getShardCollectionId, getStandardCollectionId } from './rag/collection-manager.js';
 
 let settingsSaveTraceCount = 0;
 
@@ -48,7 +50,11 @@ export function getDefaultSettings() {
         prompts: [],            // Array of { name, content }
         activePromptName: '',
         outputMode: 'system',   // 'system' or 'lorebook'
-        collectionAliases: {},  // { [chatId]: sourceChatId } for RAG aliasing
+        collectionAliases: {},  // { [chatId]: sourceChatId } for RAG aliasing — legacy, migrated to collectionBindings
+        collectionBindings: {   // Multi-collection assignment registry
+            characters: {},     // { [avatar]: { collections, primaryCollection } }
+            chats: {},          // { [chatId]: { collections, primaryCollection, includeOwn } }
+        },
         queueDelay: 0,          // Delay in seconds between API calls in queue mode
         // summarizedRanges moved to per-chat metadata (chat_metadata.summary_sharder.summarizedRanges)
 
@@ -439,10 +445,37 @@ export function migrateSettings(settings) {
         migrated = true;
     }
 
-    // Ensure collectionAliases map exists for RAG collection linking
+    // Ensure collectionAliases map exists for RAG collection linking (legacy)
     if (!settings.collectionAliases || typeof settings.collectionAliases !== 'object') {
         settings.collectionAliases = {};
         migrated = true;
+    }
+
+    // Ensure collectionBindings structure exists
+    if (!settings.collectionBindings || typeof settings.collectionBindings !== 'object') {
+        settings.collectionBindings = { characters: {}, chats: {} };
+        migrated = true;
+    }
+    if (!settings.collectionBindings.characters || typeof settings.collectionBindings.characters !== 'object') {
+        settings.collectionBindings.characters = {};
+        migrated = true;
+    }
+    if (!settings.collectionBindings.chats || typeof settings.collectionBindings.chats !== 'object') {
+        settings.collectionBindings.chats = {};
+        migrated = true;
+    }
+
+    // Migrate legacy collectionIdOverrides / collectionAliases into collectionBindings
+    if (settings.collectionIdOverrides || settings.collectionAliases) {
+        const bindingMigrated = migrateToCollectionBindings(
+            settings,
+            getShardCollectionId,
+            getStandardCollectionId,
+        );
+        if (bindingMigrated) {
+            log.log('Migrated legacy collection overrides/aliases into collectionBindings');
+            migrated = true;
+        }
     }
 
     // Migrate to new apiFeatures structure
