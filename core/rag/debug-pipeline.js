@@ -5,7 +5,7 @@
 
 import { getRequestHeaders } from '../../../../../../script.js';
 import { extension_settings } from '../../../../../extensions.js';
-import { getShardCollectionId } from './collection-manager.js';
+import { getActiveCollectionIds, getWriteTargetCollectionId } from './collection-manager.js';
 import { bm25Score, keywordBoost, runClientHybridFusion, scoreAndRank } from './scoring.js';
 import { resolveRagEmbeddingApiKey } from './rag-secrets.js';
 import { rerankDocuments } from './reranker-client.js';
@@ -345,7 +345,7 @@ function applyImportanceBoost(results) {
             return item;
         }
 
-        const boost = (importance - 50) / 500;
+        const boost = (importance - 50) / 200;
         return {
             ...item,
             score: base + boost,
@@ -392,7 +392,7 @@ function formatInjectionText(template, results) {
  * @param {Array<Object>} shardResults
  * @returns {Promise<Array<Object>>}
  */
-async function expandByScene(settings, shardResults) {
+async function expandByScene(settings, shardResults, collectionId) {
     const rag = settings?.rag;
     if (!rag?.sceneExpansion || !Array.isArray(shardResults) || shardResults.length === 0) {
         return [];
@@ -408,8 +408,6 @@ async function expandByScene(settings, shardResults) {
         .filter(Boolean))];
 
     if (sceneCodes.length === 0) return [];
-
-    const collectionId = getShardCollectionId();
     const expanded = [];
     const maxSceneExpansionChunks = Math.max(0, Number(rag.maxSceneExpansionChunks) || 10);
 
@@ -598,7 +596,7 @@ export function runScoringBreakdown(results, queryText, ragSettings = {}) {
         const stageScore = toScore(scoreStage);
         const finalScore = toScore(imp);
         const importance = Number(base?.metadata?.importance);
-        const importanceBoost = Number.isFinite(importance) ? ((importance - 50) / 500) : 0;
+        const importanceBoost = Number.isFinite(importance) ? ((importance - 50) / 200) : 0;
         const hashKey = String(base?.hash || '');
 
         return {
@@ -763,7 +761,8 @@ export async function runDebugPipeline(overrides = {}) {
     if (overrides.scoringMethod) rag.scoringMethod = overrides.scoringMethod;
     if (typeof overrides.sceneExpansion === 'boolean') rag.sceneExpansion = overrides.sceneExpansion;
 
-    const shardCollectionId = getShardCollectionId();
+    const activeCollectionIds = getActiveCollectionIds(null, settings);
+    const writeTargetCollectionId = getWriteTargetCollectionId(null, settings);
     const stages = [];
     const t0 = nowMs();
     const queryText = String(overrides.queryText || buildQueryText(chat, rag.queryCount));
@@ -818,8 +817,12 @@ export async function runDebugPipeline(overrides = {}) {
     const queryFn = useNativeHybrid ? hybridQuery : queryChunks;
 
     sourceResults = await runStage(stages, 'vectorQuery', [], async () => {
-        const shardRes = await queryFn(shardCollectionId, queryText, topK, threshold, rag);
-        const shardResults = Array.isArray(shardRes?.results) ? shardRes.results : [];
+        const querySettled = await Promise.allSettled(
+            activeCollectionIds.map(id => queryFn(id, queryText, topK, threshold, rag))
+        );
+        const shardResults = querySettled.flatMap(r =>
+            r.status === 'fulfilled' && Array.isArray(r.value?.results) ? r.value.results : []
+        );
         return {
             results: shardResults,
             metadata: {
@@ -828,6 +831,7 @@ export async function runDebugPipeline(overrides = {}) {
                 threshold,
                 useNativeHybrid,
                 useClientHybrid,
+                collectionIds: activeCollectionIds,
             },
         };
     }, baseMeta);
@@ -853,6 +857,10 @@ export async function runDebugPipeline(overrides = {}) {
         return { results: scored };
     }, baseMeta);
 
+    working = await runStage(stages, 'importanceBoost', working, async (input) => ({
+        results: applyImportanceBoost(input),
+    }), baseMeta);
+
     working = await runStage(stages, 'thresholdFilter', working, async (input) => {
         const droppedReasons = [];
         const filtered = [];
@@ -877,7 +885,7 @@ export async function runDebugPipeline(overrides = {}) {
         if (rag.sceneExpansion === false) {
             return { results: [], metadata: { skipped: true } };
         }
-        return { results: await expandByScene({ rag }, sourceResults) };
+        return { results: await expandByScene({ rag }, sourceResults, writeTargetCollectionId) };
     }, baseMeta);
 
     working = await runStage(stages, 'mergeAndDedup', [...working, ...sceneExpanded], async (input) => {
@@ -892,7 +900,7 @@ export async function runDebugPipeline(overrides = {}) {
         if (!isSharder || input.some(item => item?.metadata?.chunkBehavior === 'superseding')) {
             return { results: input, metadata: { skipped: true } };
         }
-        const latest = await fetchLatestSuperseding(shardCollectionId, rag);
+        const latest = await fetchLatestSuperseding(writeTargetCollectionId, rag);
         if (!latest) return { results: input, metadata: { found: false } };
 
         const results = [...input, latest];
@@ -912,7 +920,7 @@ export async function runDebugPipeline(overrides = {}) {
         }
 
         const queryRolling = dedupeLatestRolling(input);
-        const fallback = await fetchLatestRolling(shardCollectionId, rag, 50);
+        const fallback = await fetchLatestRolling(writeTargetCollectionId, rag, 50);
         const pinned = mergeLatestRolling(queryRolling, fallback.items);
 
         rollingPinState.items = pinned;
@@ -944,7 +952,7 @@ export async function runDebugPipeline(overrides = {}) {
         }
 
         const queryAnchors = collectLatestAnchors(input);
-        const fallback = await fetchLatestAnchors(shardCollectionId, rag, 50);
+        const fallback = await fetchLatestAnchors(writeTargetCollectionId, rag, 50);
         const pinned = mergeLatestAnchors(queryAnchors, fallback.items);
 
         anchorsPinState.items = pinned;
@@ -973,10 +981,6 @@ export async function runDebugPipeline(overrides = {}) {
             metadata: deduped.metadata,
         };
     }, baseMeta);
-
-    working = await runStage(stages, 'importanceBoost', working, async (input) => ({
-        results: applyImportanceBoost(input),
-    }), baseMeta);
 
     working = await runStage(stages, 'reranker', working, async (input) => {
         if (!rag?.reranker?.enabled) {

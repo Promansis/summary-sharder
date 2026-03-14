@@ -6,8 +6,9 @@ import { Popup, POPUP_TYPE } from '../../../../../../popup.js';
 import {
     checkBackendHealth,
     checkPluginAvailability,
+    getActiveCollectionIds,
     getCollectionStats,
-    getShardCollectionId,
+    getWriteTargetCollectionId,
     hybridQuery,
     listChunks,
     queryChunks,
@@ -194,18 +195,18 @@ function renderModalHtml(state) {
 }
 
 export async function openRagDebugModal(ragDraft) {
-    let shardCollectionId;
-    try {
-        shardCollectionId = getShardCollectionId();
-    } catch (error) {
-        toastr.error(`Cannot open RAG debug modal: ${error?.message || error}`);
+    const writeTargetCollectionId = getWriteTargetCollectionId(null, ragDraft);
+    if (!writeTargetCollectionId) {
+        toastr.error('Cannot open RAG debug modal: no active chat');
         return;
     }
+    const activeCollectionIds = getActiveCollectionIds(null, ragDraft);
 
     const state = {
         rag: { ...ragDraft },
         activeTab: 'health',
-        shardCollectionId,
+        writeTargetCollectionId,
+        activeCollectionIds,
         inspector: { behaviorFilter: 'all', sceneFilter: '', offset: 0, total: 0 },
         pipeline: { stages: [], injectionText: '', totalDuration: 0, lastResult: null },
         runIds: { health: 0, embedding: 0, inspector: 0, query: 0, pipeline: 0, reranker: 0 },
@@ -286,7 +287,7 @@ export async function openRagDebugModal(ragDraft) {
             if (runId !== state.runIds.health) return;
             const t4 = performance.now();
 
-            const shardStats = await getCollectionStats(state.shardCollectionId, state.rag);
+            const shardStats = await getCollectionStats(state.writeTargetCollectionId, state.rag);
             if (runId !== state.runIds.health) return;
 
             const rerankerEnabled = !!state.rag?.reranker?.enabled;
@@ -306,7 +307,7 @@ export async function openRagDebugModal(ragDraft) {
             if (resetOffset) state.inspector.offset = 0;
             const runId = ++state.runIds.inspector;
             dom.inspectorItems.innerHTML = '<p class="ss-hint ss-rag-inline-hint">Loading chunks...</p>';
-            const response = await listChunks(state.shardCollectionId, state.rag, { offset: state.inspector.offset, limit: INSPECTOR_PAGE_SIZE });
+            const response = await listChunks(state.writeTargetCollectionId, state.rag, { offset: state.inspector.offset, limit: INSPECTOR_PAGE_SIZE });
             if (runId !== state.runIds.inspector) return;
 
             let items = Array.isArray(response?.items) ? response.items : [];
@@ -401,10 +402,14 @@ export async function openRagDebugModal(ragDraft) {
             const useNativeHybrid = wantsHybrid && (state.rag.backend === 'qdrant' || state.rag.backend === 'milvus');
             const queryFn = useNativeHybrid ? hybridQuery : queryChunks;
 
-            const res = await queryFn(state.shardCollectionId, queryText, topK, threshold, state.rag);
+            const querySettled = await Promise.allSettled(
+                state.activeCollectionIds.map(id => queryFn(id, queryText, topK, threshold, state.rag))
+            );
             if (runId !== state.runIds.query) return;
 
-            const rawResults = Array.isArray(res?.results) ? res.results : [];
+            const rawResults = querySettled.flatMap(r =>
+                r.status === 'fulfilled' && Array.isArray(r.value?.results) ? r.value.results : []
+            );
             const breakdown = runScoringBreakdown(rawResults, queryText, state.rag);
             const scored = [...breakdown]
                 .sort((a, b) => Number(b?.finalScore || 0) - Number(a?.finalScore || 0))

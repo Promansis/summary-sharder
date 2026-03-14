@@ -895,6 +895,7 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
             merged = keywordBoost(merged, queryText);
         }
 
+        merged = applyImportanceBoost(merged);
         merged = merged.filter(item => (Number(item?.score) || 0) >= threshold);
 
         // Scene expansion only applies to Sharder Mode (which has [S{n}:{n}] scene codes).
@@ -959,7 +960,6 @@ export async function rearrangeChat(chat, contextSize, abort, type) {
         const rerankMeta = await applyReranker(merged, queryText, rag);
         merged = rerankMeta.results;
 
-        merged = applyImportanceBoost(merged);
         const rerankerApplied = !!rerankMeta.metadata?.applied;
 
         // Capping per shard (Standard mode only for now, sharder has its own section-based capping)
