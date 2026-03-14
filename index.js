@@ -35,6 +35,7 @@ import {
     rearrangeChat,
     clearRagPromptInjection,
     getChatBinding,
+    initBackend,
 } from './core/rag/index.js';
 
 const MODULE_NAME = 'SummarySharder';
@@ -408,6 +409,66 @@ function onChatChanged() {
 }
 
 /**
+ * Build the initBackend config object from a RAG settings backendConfig.
+ * @param {string} backend
+ * @param {Object} bc - backendConfig
+ * @returns {Object}
+ */
+function buildBackendInitConfig(backend, bc) {
+    if (backend === 'qdrant') {
+        const address = String(bc.qdrantAddress || 'localhost:6333').trim();
+        const match = address.match(/^(.*):(\d+)$/);
+        const host = match ? (String(match[1] || 'localhost').trim() || 'localhost') : address;
+        const port = match ? Math.max(1, parseInt(match[2], 10) || 6333) : 6333;
+        return {
+            host,
+            port,
+            apiKey: bc.qdrantApiKey || '',
+            url: bc.qdrantUseCloud ? (bc.qdrantUrl || '') : '',
+        };
+    }
+    return {
+        address: bc.milvusAddress || '',
+        token: bc.milvusToken || '',
+    };
+}
+
+/**
+ * Auto-initialize remote backends (Qdrant/Milvus) using credentials stored in settings.
+ * Checks both rag and ragStandard configs and initialises whichever use a remote backend.
+ * Runs silently on startup so the user doesn't need to manually hit "Initialize Backend".
+ * @param {Object} currentSettings
+ */
+async function autoInitRemoteBackend(currentSettings) {
+    const configs = [currentSettings?.rag, currentSettings?.ragStandard].filter(Boolean);
+    const seen = new Set();
+
+    for (const ragSettings of configs) {
+        const backend = ragSettings?.backend;
+        if (backend !== 'qdrant' && backend !== 'milvus') continue;
+
+        // Deduplicate: same backend + same address only needs one init call
+        const bc = ragSettings?.backendConfig || {};
+        const dedupeKey = `${backend}:${bc.qdrantAddress || bc.milvusAddress || ''}`;
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
+
+        const cfg = buildBackendInitConfig(backend, bc);
+        log.log(`Auto-initializing ${backend} backend...`);
+        try {
+            const result = await initBackend(backend, cfg);
+            if (result.success) {
+                log.log(`${backend} backend auto-initialized successfully`);
+            } else {
+                log.warn(`${backend} auto-init returned: ${result.message || 'no success status'}`);
+            }
+        } catch (err) {
+            log.warn(`${backend} auto-init error:`, err?.message || err);
+        }
+    }
+}
+
+/**
  * Initialize the extension
  */
 jQuery(async () => {
@@ -428,6 +489,9 @@ jQuery(async () => {
     migrateSettings(settings);
     saveSettings(settings);
     setLastSummarizedIndexCallback(setLastSummarizedIndex);
+
+    // Auto-initialize remote vector backends (Qdrant/Milvus) using stored credentials
+    autoInitRemoteBackend(settings);
 
     // Ensure default prompt exists
     ensureDefaultPrompt(settings);
