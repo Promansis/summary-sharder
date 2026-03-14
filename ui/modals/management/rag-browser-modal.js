@@ -246,14 +246,23 @@ function getCollectionChatInfo(state, collectionId) {
 function getEffectiveRagSettings(state) {
     const selected = state.selectedCollection || {};
     const hasSelected = !!selected.id;
+    const effectiveSource = (selected.source || state.rag?.source || '').toLowerCase();
+
+    // For transformers, the model field is a path subdirectory, so we must use the
+    // collection's stored value (even if '') to avoid pointing at the wrong subfolder.
+    // For direct-embedding sources (openai, custom, etc.), the model is an API model
+    // name — if the collection didn't store one, fall back to the current settings model
+    // so the re-embed request isn't sent without a model name (which causes a 400).
+    const isTransformers = effectiveSource === 'transformers';
+    const resolvedModel = hasSelected
+        ? (selected.model || (isTransformers ? '' : (state.rag?.model || '')))
+        : undefined;
+
     return {
         ...(state.rag || {}),
         ...(selected.backend ? { backend: selected.backend } : {}),
         ...(selected.source ? { source: selected.source } : {}),
-        // Always override model when a collection is selected, even if its model path is ''
-        // (flat-indexed). This prevents state.rag.model from leaking in and pointing to a
-        // wrong subdirectory for collections that were indexed without a model sub-folder.
-        ...(hasSelected ? { model: selected.model || '' } : {}),
+        ...(resolvedModel !== undefined ? { model: resolvedModel } : {}),
     };
 }
 
